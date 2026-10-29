@@ -6,6 +6,7 @@ from models.project import Project, GRIDS, PPQ
 from services.undo import History
 from services import project_io, patch_names
 from services.output_mode import switch_destination
+from services.meter import MeterMap, set_at_bar, remove_at_bar
 from midi import smf
 from midi.player import Player
 from midi.internal_preview import InternalPreviewOutput
@@ -17,7 +18,7 @@ from ui.track_colors import track_color
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('JUNO Sketch • v0.1.3')
+        self.title('JUNO Sketch • v0.1.4')
         self.geometry('1240x820')
         self.minsize(940,620)
         self.project=Project();self.history=History();self.player=Player()
@@ -59,7 +60,7 @@ class MainWindow(tk.Tk):
         self.roll=PianoRoll(self.editor_body,self)
         self.overview=TrackOverview(self.editor_body,self)
         self.roll.pack(fill='both',expand=True)
-        self.status=tk.StringVar(value='Ready • 4/4 • PPQ 960')
+        self.status=tk.StringVar(value='Ready • PPQ 960')
         ttk.Label(self,textvariable=self.status,anchor='w',padding=6).pack(side='bottom',fill='x',before=body)
         for key in ('<Delete>','<BackSpace>'):
             self.bind(key,self.delete_key)
@@ -113,6 +114,8 @@ class MainWindow(tk.Tk):
         self.view_var=tk.StringVar(value='Piano Roll')
         view=ttk.Combobox(views,textvariable=self.view_var,values=['Piano Roll','All Tracks'],state='readonly',width=13)
         view.pack(side='left',padx=6);view.bind('<<ComboboxSelected>>',self.view_change)
+        self.meter_button=ttk.Button(views,text='拍子 4/4…',command=self.meter_dialog)
+        self.meter_button.pack(side='left',padx=6)
         self.ghost_var=tk.BooleanVar(value=True)
         self.ghost_button=ttk.Checkbutton(views,text='他トラックをレイヤー表示',variable=self.ghost_var,command=self.layer_change)
         self.ghost_button.pack(side='left',padx=10)
@@ -125,6 +128,8 @@ class MainWindow(tk.Tk):
         for i in range(16):
             self.list.itemconfigure(i,foreground=track_color(i),background='#20252d',selectbackground='#434b59',selectforeground=track_color(i))
         index=self.project.ui['selected'];self.list.selection_set(index)
+        first=MeterMap(self.project.signatures).segments[0]
+        self.meter_button.configure(text=f'拍子 {first.numerator}/{first.denominator}…')
         self.name_var.set(self.track.name)
         self.auto_name_var.set(self.track.auto_name)
         self.fields['channel'].set(self.track.channel+1)
@@ -220,6 +225,56 @@ class MainWindow(tk.Tk):
             self.changed();self.sync_ui()
             self.ensure_output().setup(self.track)
         self.guarded(action)
+    def change_meter(self,bar,numerator,denominator):
+        signatures=set_at_bar(self.project.signatures,bar,numerator,denominator)
+        self.commit_meter(signatures)
+    def commit_meter(self,signatures):
+        if signatures==self.project.signatures:return
+        self.stop();self.checkpoint()
+        self.project.signatures=signatures
+        self.changed();self.sync_ui()
+        self.status.set('拍子を変更しました。ノートのtick位置は維持しています。')
+    def meter_dialog(self):
+        dialog=tk.Toplevel(self)
+        dialog.title('Time Signature')
+        dialog.transient(self)
+        frame=ttk.Frame(dialog,padding=12);frame.pack(fill='both',expand=True)
+        ttk.Label(frame,text='拍子変更（小節番号で指定）').pack(anchor='w')
+        changes=tk.Listbox(frame,width=42,height=8,exportselection=False)
+        changes.pack(fill='both',expand=True,pady=8)
+        row=ttk.Frame(frame);row.pack(fill='x')
+        bar=tk.StringVar(value=str(MeterMap(self.project.signatures).position(self.playhead)[0]))
+        numerator=tk.StringVar(value='4');denominator=tk.StringVar(value='4')
+        ttk.Label(row,text='小節').pack(side='left')
+        ttk.Spinbox(row,textvariable=bar,from_=1,to=99999,width=7).pack(side='left',padx=5)
+        ttk.Spinbox(row,textvariable=numerator,from_=1,to=255,width=5).pack(side='left')
+        ttk.Label(row,text='/').pack(side='left',padx=5)
+        ttk.Combobox(row,textvariable=denominator,values=[1,2,4,8,16,32,64,128,256],state='readonly',width=5).pack(side='left')
+        def refresh():
+            changes.delete(0,'end')
+            for segment in MeterMap(self.project.signatures).segments:
+                changes.insert('end',f'小節 {segment.bar}    {segment.numerator}/{segment.denominator}    tick {segment.tick}')
+        def select(event):
+            if changes.curselection():
+                s=MeterMap(self.project.signatures).segments[changes.curselection()[0]]
+                bar.set(s.bar);numerator.set(s.numerator);denominator.set(s.denominator)
+        def apply():
+            self.change_meter(int(bar.get()),int(numerator.get()),int(denominator.get()))
+            refresh()
+        def remove():
+            if changes.curselection():
+                s=MeterMap(self.project.signatures).segments[changes.curselection()[0]]
+                self.commit_meter(remove_at_bar(self.project.signatures,s.bar));refresh()
+        changes.bind('<<ListboxSelect>>',select)
+        buttons=ttk.Frame(frame);buttons.pack(fill='x',pady=8)
+        ttk.Button(buttons,text='設定',command=lambda:self.guarded(apply)).pack(side='left')
+        ttk.Button(buttons,text='選択した変更を削除',command=lambda:self.guarded(remove)).pack(side='left',padx=6)
+        ttk.Button(buttons,text='閉じる',command=dialog.destroy).pack(side='right')
+        ttk.Label(frame,text='ノートのtick位置は移動しません。BPMは4分音符基準です。').pack(anchor='w')
+        current=MeterMap(self.project.signatures).segment(self.playhead)
+        numerator.set(current.numerator);denominator.set(current.denominator)
+        refresh();dialog.grab_set()
+        dialog.bind('<Escape>',lambda e:dialog.destroy())
     def apply_bpm(self):
         bpm=float(self.bpm.get())
         if not 20<=bpm<=400:raise ValueError('BPMは20〜400です')
@@ -298,7 +353,8 @@ class MainWindow(tk.Tk):
     def poll(self):
         if self.player.playing:
             cursor=self.player.cursor();self.draw_cursors(cursor)
-            beat=int(cursor)//PPQ;self.status.set(f'Playing  {beat//4+1}|{beat%4+1}   tick {int(cursor)%PPQ}')
+            bar,beat,tick,n,d=MeterMap(self.project.signatures).position(cursor)
+            self.status.set(f'Playing  {bar}|{beat}   tick {tick}   {n}/{d}')
         if self.was_playing and not self.player.playing:
             self.playhead=int(self.player.position);self.draw_cursors(self.playhead)
             self.status.set('Stopped')

@@ -71,6 +71,8 @@ class Project:
             raise ValueError('不正な表示設定です')
         p.tempos = data.get('tempos', [])
         p.signatures = data.get('signatures', [[0,4,4]])
+        from services.meter import MeterMap
+        MeterMap(p.signatures)
         if p.ui['output'] not in ('Internal Preview', 'JUNO-DS'):
             raise ValueError('未対応の出力先です')
         for tick, tempo in p.tempos:

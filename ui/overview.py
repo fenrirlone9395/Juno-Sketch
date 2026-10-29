@@ -1,6 +1,7 @@
 """Read-only, sixteen-lane playback overview. Editing lives in PianoRoll."""
 import tkinter as tk
 from models.project import PPQ
+from services.meter import MeterMap
 from ui.track_colors import track_color, project_end
 
 
@@ -41,11 +42,13 @@ class TrackOverview(tk.Frame):
     def draw_ruler(self):
         self.ruler.delete('all')
         offset = self.canvas.canvasx(0)
-        first = max(0, int((offset-self.LABEL)/(PPQ*self.SCALE)))
-        count = max(1, self.canvas.winfo_width()) // int(PPQ*self.SCALE) + 3
-        for beat in range(first, first+count):
-            x = self.LABEL + beat*PPQ*self.SCALE-offset
-            self.ruler.create_text(x+3, 13, text=f'{beat//4+1}|{beat%4+1}', anchor='w', fill='#e3e8f0')
+        meter = MeterMap(self.app.project.signatures)
+        start = max(0, int((offset-self.LABEL)/self.SCALE))
+        end = start+int(max(1,self.canvas.winfo_width())/self.SCALE)+PPQ
+        for tick,bar,beat,n,d in meter.beats(start,end):
+            x = self.LABEL + tick*self.SCALE-offset
+            if beat==1 or PPQ*4/d*self.SCALE>=40:
+                self.ruler.create_text(x+3, 13, text=f'{bar}|{beat}', anchor='w', fill='#e3e8f0')
         self.ruler.create_rectangle(0, 0, self.LABEL, 28, fill='#20252d', outline='')
         self.ruler.create_text(8, 13, text='ALL TRACKS', anchor='w', fill='#c5cedb')
 
@@ -54,8 +57,9 @@ class TrackOverview(tk.Frame):
         c.delete('all')
         self.labels.delete('all')
         project = self.app.project
-        bars = max(project.ui.get('bars', 8), 2+project_end(project)//(PPQ*4))
-        width = self.LABEL + bars*PPQ*4*self.SCALE
+        meter = MeterMap(project.signatures)
+        end_tick = meter.extent(project_end(project),project.ui.get('bars',8))
+        width = self.LABEL + end_tick*self.SCALE
         height = max(1, c.winfo_height())
         c.configure(scrollregion=(0, 0, width, height))
         lane = self.lane_height()
@@ -68,9 +72,9 @@ class TrackOverview(tk.Frame):
             self.labels.create_rectangle(3, y+3, 7, y+lane-3, fill=track_color(i), outline='')
             self.labels.create_text(13, y+lane/2, text=f'{i+1:02}  {track.name}  [Ch {track.channel+1}]',
                                     anchor='w', fill=track_color(i), width=self.LABEL-18)
-        for beat in range(bars*4+1):
-            x = self.LABEL + beat*PPQ*self.SCALE
-            c.create_line(x, 0, x, height, fill='#525d6d' if beat % 4 == 0 else '#303946')
+        for tick,bar,beat,n,d in meter.beats(0,end_tick):
+            x = self.LABEL + tick*self.SCALE
+            c.create_line(x, 0, x, height, fill='#525d6d' if beat==1 else '#303946',tags='meter_line')
         for i, track in enumerate(project.tracks):
             low = min((n.pitch for n in track.notes), default=60)-2
             high = max((n.pitch for n in track.notes), default=72)+2

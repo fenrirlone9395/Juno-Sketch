@@ -153,3 +153,31 @@ def test_destination_switch_sends_all_tracks_and_port_changes_preserve_banks(mon
         assert app.track.msb==121
     finally:
         app.stop();app.release_output();app.destroy()
+
+
+def test_meter_edit_updates_both_views_without_moving_notes():
+    from ui.main_window import MainWindow
+    from models.project import Note
+    app=MainWindow()
+    try:
+        app.track.notes=[Note(3000,60,240)]
+        app.change_meter(1,3,4);app.update()
+        assert app.project.signatures==[[0,3,4]]
+        assert app.track.notes[0].start==3000
+        def texts(canvas):
+            return [canvas.itemcget(i,'text') for i in canvas.find_all() if canvas.type(i)=='text']
+        assert '2|1' in texts(app.roll.ruler)
+        labels=[i for i in app.roll.ruler.find_all() if app.roll.ruler.type(i)=='text' and app.roll.ruler.itemcget(i,'text')=='2|1']
+        assert app.roll.ruler.coords(labels[0])[0]==pytest.approx(app.roll.KEY+2880*app.roll.SCALE+3)
+        app.view_var.set('All Tracks');app.view_change();app.update()
+        assert '2|1' in texts(app.overview.ruler)
+        app.change_meter(5,6,8)
+        assert app.project.signatures==[[0,3,4],[11520,6,8]]
+        app.undo();assert app.project.signatures==[[0,3,4]]
+        app.redo();assert app.project.signatures[-1]==[11520,6,8]
+        app.meter_dialog();app.update()
+        dialogs=[w for w in app.winfo_children() if w.winfo_class()=='Toplevel']
+        assert dialogs
+        for d in dialogs:d.destroy()
+    finally:
+        app.stop();app.release_output();app.destroy()

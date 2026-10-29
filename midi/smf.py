@@ -1,6 +1,7 @@
 from collections import defaultdict, deque
 import mido
 from models.project import Project, Note, PPQ
+from services.meter import MeterMap
 
 def save(project, path):
     f = mido.MidiFile(type=1, ticks_per_beat=PPQ)
@@ -94,7 +95,6 @@ def load(path):
     if p.tempos and p.tempos[0][0]==0:
         p.bpm = mido.tempo2bpm(p.tempos[0][1])
     if not p.signatures: p.signatures=[[0,4,4]]
-    if any(n!=4 or d!=4 for _,n,d in p.signatures):
-        warnings.append('拍子情報は保存・再生時に保持しますが、エディターの小節線は4/4表示です')
-    p.ui['bars'] = max(8, 1+max((n.start+n.duration for tr in p.tracks for n in tr.notes),default=0)//(4*PPQ))
+    meter=MeterMap(p.signatures)
+    p.ui['bars'] = max(8,meter.position(max((n.start+n.duration for tr in p.tracks for n in tr.notes),default=0))[0]+1)
     return p, list(dict.fromkeys(warnings))

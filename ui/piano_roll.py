@@ -1,6 +1,7 @@
 import tkinter as tk
 from copy import deepcopy
 from models.project import Note, PPQ, GRIDS
+from services.meter import MeterMap
 from ui.track_colors import track_color, ghost_color, project_end
 
 class PianoRoll(tk.Frame):
@@ -59,11 +60,13 @@ class PianoRoll(tk.Frame):
         self.ruler.delete('all')
         offset=self.canvas.canvasx(0)
         width=max(self.ruler.winfo_width(),1)
-        first=max(0,int((offset-self.KEY)/(PPQ*self.SCALE)))
-        last=first+int(width/(PPQ*self.SCALE))+3
-        for beat in range(first,last):
-            x=self.KEY+beat*PPQ*self.SCALE-offset
-            self.ruler.create_text(x+3,14,text=f'{beat//4+1}|{beat%4+1}',anchor='w',fill='#e3e8f0')
+        meter=MeterMap(self.app.project.signatures)
+        start=max(0,int((offset-self.KEY)/self.SCALE))
+        end=start+int(width/self.SCALE)+PPQ
+        for tick,bar,beat,n,d in meter.beats(start,end):
+            x=self.KEY+tick*self.SCALE-offset
+            if beat==1 or PPQ*4/d*self.SCALE>=40:
+                self.ruler.create_text(x+3,14,text=f'{bar}|{beat}',anchor='w',fill='#e3e8f0')
             self.ruler.create_line(x,22,x,28,fill='#8b97a6')
         self.ruler.create_rectangle(0,0,self.KEY,28,fill='#20252d',outline='')
     def xview(self,*args):
@@ -78,7 +81,7 @@ class PianoRoll(tk.Frame):
         t=max(0,round(t))
         if self.app.project.ui['mode']=='Grid':
             step=GRIDS[self.app.project.ui['grid']]
-            return int((t+step/2)//step*step)
+            return MeterMap(self.app.project.signatures).snap(t,step)
         return t
     def coords(self,n):
         return (self.KEY+n.start*self.SCALE,self.TOP+(127-n.pitch)*self.ROW,
@@ -89,8 +92,9 @@ class PianoRoll(tk.Frame):
         c=self.canvas
         view=c.xview()[0]
         c.delete('all')
-        bars=max(self.app.project.ui.get('bars',8),2+project_end(self.app.project)//(4*PPQ))
-        width=self.KEY+bars*4*PPQ*self.SCALE
+        meter=MeterMap(self.app.project.signatures)
+        end_tick=meter.extent(project_end(self.app.project),self.app.project.ui.get('bars',8))
+        width=self.KEY+end_tick*self.SCALE
         height=self.TOP+128*self.ROW
         c.configure(scrollregion=(0,0,width,height))
         for pitch in range(128):
@@ -101,9 +105,12 @@ class PianoRoll(tk.Frame):
             if pitch%12==0:
                 c.create_text(30,y+8,text=f'C{pitch//12-1}',fill='#222')
         step=GRIDS[self.app.project.ui['grid']]
-        for tick in range(0,bars*4*PPQ+1,step):
+        for tick in meter.grid_ticks(end_tick,step):
             x=self.KEY+tick*self.SCALE
-            c.create_line(x,self.TOP,x,height,fill='#727b8a' if tick%(4*PPQ)==0 else '#434b59')
+            c.create_line(x,self.TOP,x,height,fill='#434b59')
+        for tick,bar,beat,n,d in meter.beats(0,end_tick):
+            x=self.KEY+tick*self.SCALE
+            c.create_line(x,self.TOP,x,height,fill='#727b8a' if beat==1 else '#505b6b',tags='meter_line')
         active = self.app.project.ui['selected']
         if self.app.project.ui.get('show_ghosts', True):
             for index, track in enumerate(self.app.project.tracks):
