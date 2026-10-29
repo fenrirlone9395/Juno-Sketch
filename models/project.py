@@ -1,0 +1,77 @@
+from dataclasses import dataclass, field, asdict
+from uuid import uuid4
+
+PPQ = 960
+GRIDS = {f'1/{d}{suffix}': PPQ * 4 // d * (2 if suffix else 3) // 3
+         for d in (4, 8, 16, 32) for suffix in ('', 'T')}
+
+@dataclass
+class Note:
+    start: int
+    pitch: int
+    duration: int
+    velocity: int = 100
+    id: str = field(default_factory=lambda: uuid4().hex)
+
+@dataclass
+class Track:
+    name: str = 'Track'
+    channel: int = 0
+    msb: int = 0
+    lsb: int = 0
+    program: int = 0
+    velocity: int = 100
+    notes: list[Note] = field(default_factory=list)
+    events: list = field(default_factory=list)
+
+@dataclass
+class Project:
+    bpm: float = 120
+    tracks: list[Track] = field(default_factory=lambda: [Track(f'Track {i+1:02}', i) for i in range(16)])
+    tempos: list = field(default_factory=list)
+    signatures: list = field(default_factory=lambda: [[0, 4, 4]])
+    ui: dict = field(default_factory=lambda: dict(grid='1/16', mode='Grid', selected=0, output='Internal Preview', port='', bars=8, show_ghosts=True, view='Piano Roll', follow_playhead=True))
+
+    def data(self):
+        return asdict(self)
+
+    @classmethod
+    def from_data(cls, data):
+        p = cls()
+        p.bpm = float(data['bpm'])
+        if not 20 <= p.bpm <= 400 or len(data['tracks']) != 16:
+            raise ValueError('BPMは20〜400、トラック数は16が必要です')
+        p.tracks = []
+        for t in data['tracks']:
+            t = dict(t)
+            t['notes'] = [Note(**n) for n in t['notes']]
+            track = Track(**t)
+            if not (0 <= track.channel <= 15 and all(0 <= x <= 127 for x in (track.msb, track.lsb, track.program)) and 1 <= track.velocity <= 127):
+                raise ValueError('不正なトラック設定です')
+            for n in track.notes:
+                if not (n.start >= 0 and n.duration >= 1 and 0 <= n.pitch <= 127 and 1 <= n.velocity <= 127):
+                    raise ValueError('不正なノートです')
+            p.tracks.append(track)
+        p.ui.update(data.get('ui', {}))
+        if p.ui['grid'] not in GRIDS or p.ui['mode'] not in ('Grid', 'Slip') or not 0 <= p.ui['selected'] < 16:
+            raise ValueError('不正なUI設定です')
+        if (p.ui['view'] not in ('Piano Roll', 'All Tracks')
+                or not isinstance(p.ui['show_ghosts'], bool)
+                or not isinstance(p.ui['follow_playhead'], bool)):
+            raise ValueError('不正な表示設定です')
+        p.tempos = data.get('tempos', [])
+        p.signatures = data.get('signatures', [[0,4,4]])
+        if p.ui['output'] not in ('Internal Preview', 'JUNO-DS'):
+            raise ValueError('未対応の出力先です')
+        for tick, tempo in p.tempos:
+            if not (isinstance(tick, int) and tick >= 0 and 1 <= tempo <= 16777215):
+                raise ValueError('不正なテンポ情報です')
+        import mido
+        for track in p.tracks:
+            for tick, event in track.events:
+                if not isinstance(tick, int) or tick < 0:
+                    raise ValueError('不正なイベント位置です')
+                message = mido.Message.from_dict(event)
+                if message.type not in ('control_change', 'program_change', 'pitchwheel', 'aftertouch', 'polytouch'):
+                    raise ValueError('未対応のMIDIイベントです')
+        return p
