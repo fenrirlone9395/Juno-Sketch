@@ -5,6 +5,7 @@ import mido
 from models.project import Project, GRIDS, PPQ
 from services.undo import History
 from services import project_io, patch_names
+from services.output_mode import switch_destination
 from midi import smf
 from midi.player import Player
 from midi.internal_preview import InternalPreviewOutput
@@ -16,7 +17,7 @@ from ui.track_colors import track_color
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('JUNO Sketch • v0.1.2')
+        self.title('JUNO Sketch • v0.1.3')
         self.geometry('1240x820')
         self.minsize(940,620)
         self.project=Project();self.history=History();self.player=Player()
@@ -132,6 +133,7 @@ class MainWindow(tk.Tk):
         self.bpm.set(f'{self.project.bpm:g}')
         self.mode.set(self.project.ui['mode']);self.grid_var.set(self.project.ui['grid'])
         self.output_var.set(self.project.ui['output']);self.port.set(self.project.ui.get('port',''))
+        self.update_patch_label()
         self.view_var.set(self.project.ui.get('view','Piano Roll'))
         self.ghost_var.set(self.project.ui.get('show_ghosts',True))
         self.follow_var.set(self.project.ui.get('follow_playhead',True))
@@ -184,7 +186,8 @@ class MainWindow(tk.Tk):
             lsb=int(self.fields['lsb'].get())
             program=int(self.fields['program'].get())-1
             patch=patch_names.lookup(msb,lsb,program)
-            text=f"JUNO: {patch['name']} ({patch['bank']})" if patch else 'JUNO: 未登録のBank / Program'
+            prefix='GM' if self.project.ui['output']=='Internal Preview' else 'JUNO'
+            text=f"{prefix}: {patch['name']} ({patch['bank']})" if patch else f'{prefix}: 未登録のBank / Program' 
         except ValueError:
             text='JUNO: —'
         self.patch_label.set(text)
@@ -230,8 +233,30 @@ class MainWindow(tk.Tk):
         self.status.set('MIDIポート: '+(', '.join(ports) or 'なし'))
     def output_change(self,e=None):
         def action():
-            self.stop();self.release_output()
-            self.project.ui.update(output=self.output_var.get(),port=self.port.get());self.changed()
+            destination=self.output_var.get()
+            port=self.port.get()
+            if destination==self.project.ui['output'] and port==self.project.ui.get('port',''):
+                return
+            self.stop();self.release_output();self.checkpoint()
+            switched=switch_destination(self.project,destination)
+            self.project.ui['port']=port
+            self.changed();self.sync_ui()
+            if destination=='JUNO-DS' and not port:
+                self.status.set('JUNOの基本バンクを設定しました。MIDIポートを選択してください。')
+                return
+            try:
+                out=self.ensure_output()
+                for track in self.project.tracks:
+                    out.setup(track)
+            except Exception as exc:
+                # Retain the selected mode/settings; retry on reconnect/play.
+                if self.output:
+                    try:self.release_output()
+                    except Exception:self.output=None
+                self.status.set(f'出力の初期化に失敗しました: {exc}')
+                return
+            label='GM基本バンク' if destination=='Internal Preview' else 'JUNOバンク'
+            self.status.set(f'{label}を適用・送信しました' if switched else 'MIDIポートを変更しました')
         self.guarded(action)
     def ensure_output(self):
         if self.output is None:

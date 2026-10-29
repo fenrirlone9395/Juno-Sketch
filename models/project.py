@@ -24,11 +24,12 @@ class Track:
     notes: list[Note] = field(default_factory=list)
     events: list = field(default_factory=list)
     auto_name: bool = False
+    output_banks: dict = field(default_factory=dict)
 
 @dataclass
 class Project:
     bpm: float = 120
-    tracks: list[Track] = field(default_factory=lambda: [Track(f'Track {i+1:02}', i) for i in range(16)])
+    tracks: list[Track] = field(default_factory=lambda: [Track(f'Track {i+1:02}', i, msb=120 if i==9 else 121) for i in range(16)])
     tempos: list = field(default_factory=list)
     signatures: list = field(default_factory=lambda: [[0, 4, 4]])
     ui: dict = field(default_factory=lambda: dict(grid='1/16', mode='Grid', selected=0, output='Internal Preview', port='', bars=8, show_ghosts=True, view='Piano Roll', follow_playhead=True))
@@ -51,6 +52,12 @@ class Project:
                 raise ValueError('不正なトラック設定です')
             if not isinstance(track.auto_name, bool):
                 raise ValueError('不正な音色名追従設定です')
+            if not isinstance(track.output_banks, dict):
+                raise ValueError('不正な出力別バンク設定です')
+            for destination, bank in track.output_banks.items():
+                if (destination != 'JUNO-DS' or not isinstance(bank, list) or len(bank) != 2
+                        or any(not isinstance(v, int) or not 0 <= v <= 127 for v in bank)):
+                    raise ValueError('不正な出力別バンク設定です')
             for n in track.notes:
                 if not (n.start >= 0 and n.duration >= 1 and 0 <= n.pitch <= 127 and 1 <= n.velocity <= 127):
                     raise ValueError('不正なノートです')

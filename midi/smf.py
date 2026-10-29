@@ -66,6 +66,8 @@ def load(path):
                 slots[key] = len(slots)
                 tr = p.tracks[slots[key]]
                 tr.channel = m.channel
+                tr.msb = 120 if m.channel == 9 else 121
+                tr.lsb = 0
                 tr.name = name or f'Track {slots[key]+1:02}'
             tr = p.tracks[slots[key]]
             touched.add(key)

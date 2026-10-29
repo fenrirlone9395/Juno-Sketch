@@ -115,3 +115,41 @@ def test_apply_patch_name_and_auto_follow():
         assert app.track.program==1
     finally:
         app.stop();app.release_output();app.destroy()
+
+
+def test_destination_switch_sends_all_tracks_and_port_changes_preserve_banks(monkeypatch):
+    import ui.main_window as window
+    from test_core import Capture
+    outputs=[]
+    def opened(*args):
+        out=Capture();outputs.append(out);return out
+    monkeypatch.setattr(window,'InternalPreviewOutput',opened)
+    monkeypatch.setattr(window,'JunoDsOutput',opened)
+    app=window.MainWindow()
+    try:
+        app.track.auto_name=True
+        app.output_var.set('JUNO-DS');app.output_change()
+        assert (app.track.msb,app.track.lsb)==(87,64)
+        assert not outputs  # No implicit/default USB port selection.
+        app.port.set('JUNO USB');app.output_change()
+        assert len(outputs[-1].messages)==48
+        assert outputs[-1].messages[0].value==87
+        assert outputs[-1].messages[9*3].value==86
+        app.track.msb,app.track.lsb=87,73
+        app.port.set('JUNO USB 2');app.output_change()
+        assert app.track.lsb==73
+        app.output_var.set('Internal Preview');app.output_change()
+        assert (app.track.msb,app.track.lsb)==(121,0)
+        assert app.track.name=='Piano 1'
+        assert outputs[-1].messages[0].value==121
+        assert outputs[-1].messages[9*3].value==120
+        assert app.fields['msb'].get()=='121'
+        assert 'GM:' in app.patch_label.get()
+        app.undo()
+        assert app.project.ui['output']=='JUNO-DS'
+        assert app.track.lsb==73
+        app.redo()
+        assert app.project.ui['output']=='Internal Preview'
+        assert app.track.msb==121
+    finally:
+        app.stop();app.release_output();app.destroy()

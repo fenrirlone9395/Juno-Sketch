@@ -52,9 +52,13 @@ class InternalPreviewOutput(MidiOutput):
                 self.dispose(self.graph)
             raise
     def send(self, message):
-        # The system GM preview intentionally ignores JUNO bank numbers.
-        if message.type == 'control_change' and message.control in (0, 32):
-            return
+        # Use the system DLS base GM banks. Never pass arbitrary JUNO banks
+        # or unsupported variation banks through to the built-in sound bank.
+        if message.type == 'control_change' and message.control == 0:
+            value = message.value if message.value in (120, 121) else (120 if message.channel == 9 else 121)
+            message = message.copy(value=value)
+        elif message.type == 'control_change' and message.control == 32:
+            message = message.copy(value=0)
         data = message.bytes()
         with self.lock:
             status = self.event(self.unit, data[0], data[1] if len(data)>1 else 0, data[2] if len(data)>2 else 0, 0)

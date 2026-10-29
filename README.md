@@ -1,4 +1,4 @@
-# JUNO Sketch v0.1.2
+# JUNO Sketch v0.1.3
 
 JUNO-DS用の小さなPython/Tkinter MIDIシーケンサーです。16トラック、ピアノロール、通常／三連符Grid、Slip、Velocity、SMF Type 1、JSONプロジェクトを実装しています。
 
@@ -15,7 +15,7 @@ python3 -m venv .venv
 .venv/bin/python main.py
 ```
 
-内部プレビューはmacOS標準AudioToolboxのDLSシンセを使用します。FluidSynth、SoundFontのダウンロードは不要です。JUNO-DSの音色を再現するものではなく、Program Changeに対応するGM相当の確認音源です。内部プレビューではJUNO用のBank Selectを無視します。
+内部プレビューはmacOS標準AudioToolboxのDLSシンセを使用します。FluidSynth、SoundFontのダウンロードは不要です。JUNO-DSの音色を再現するものではなく、Program Changeに対応するGM相当の確認音源です。内部プレビューはGM基本バンクのMSB 121（メロディー）／120（ドラム）、LSB 0を音源へ送信します。JUNO固有バンクや派生LSBは、内部音源への送信時にGM基本バンクへ正規化します。
 
 ## .appの作成
 
@@ -137,7 +137,7 @@ SMF出力はType 1、PPQ 960。テンポ／拍子のconductor＋16のMIDIトラ�
 
 例：MSB **87**／LSB **73**／Program **1** → **Grand Pno DS**。同じProgram 1でもMSB 87／LSB 64なら **88StageGrand** です。画面はProgram 1–128、内部マップはMIDI値0–127です。
 
-ユーザー音色・サンプル・拡張音色の名前は本体の内容次第なので推測しません。未登録の組合せではトラック名を保持します。GMへ安易にフォールバックしないため、初期値MSB 0／LSB 0では「未登録」と表示されます。内部プレビューのGM相当音色名ではなく、設定したBank／Programに対応するJUNOの音色名です。曲途中のProgram Changeイベントには追従せず、トラック先頭の音色設定を使います。
+ユーザー音色・サンプル・拡張音色の名前は本体の内容次第なので推測しません。未登録の組合せではトラック名を保持します。任意入力のMSB 0／LSB 0は「未登録」です。v0.1.3以降、新規トラックの初期値はGM基本バンクです。名前表示は現在のトラックに設定されているBank／Programの対応表を参照します。内部音源はGM基本音色のプレビューであり、JUNO固有音色やGM派生音色そのものの再現ではありません。曲途中のProgram Changeイベントには追従せず、トラック先頭の音色設定を使います。
 
 トラック名の変更はUndo／Redoに対応し、プロジェクトとSMFのトラック名に保存します。追従設定は独自プロジェクトにのみ保存します。v0.1／v0.1.1のプロジェクトは追従オフで読み込み、既存名を維持します。
 
@@ -150,3 +150,24 @@ https://static.roland.com/assets/media/pdf/JUNO-DS_ParamGuide_e01_W.pdf
 ```bash
 .venv/bin/python -m PyInstaller --clean --noconfirm JunoSketch.spec
 ```
+
+## v0.1.3：出力先に応じた基本バンク切替
+
+| 出力先 | メロディー MSB / LSB | ドラム MSB / LSB |
+|---|---|---|
+| Internal Preview | 121 / 0 | 120 / 0 |
+| JUNO-DS（初回：PRST） | 87 / 64 | 86 / 64 |
+
+新規プロジェクトはInternal PreviewのGM基本バンクから開始します。チャンネル10またはドラム用MSB（86／120）を持つトラックをドラムとして判定します。
+
+出力先の切替時は再生・試聴を停止し、旧出力を消音して閉じ、全16トラックのバンクを変更します。Program番号、ノート、Velocity、チャンネル、曲途中のMIDIイベントは維持します。切替後の音色名は表示に反映され、「名前を追従」オンのトラック名も更新します。手動名は維持します。
+
+JUNOへ初めて切り替えるとPRSTバンクになります。その後JUNO側で設定したバンクはトラックごとに覚え、Internalを経由してJUNOへ戻った際に復元します。Internalへ切り替える際は毎回GM基本バンクへ戻します。出力先が同じままMIDIポートだけを変えた際は、バンクを書き換えません。JUNOのバンク履歴も独自プロジェクトに保存し、Undo／Redo対象です。
+
+ポート選択済みなら切替直後に16トラック分のBank Select MSB→LSB→Program Changeを送信します。JUNOのポート未選択時は設定のみ変更し、ポート選択後に送信します。接続・初期化エラーはステータスに表示し、選択状態と設定を残して再接続後の再試行を可能にします。
+
+GM→PRSTはBankの切替であり、音色名を照合した楽器の自動変換ではありません。同じProgram番号でもGMとJUNO PRSTでは別の音色になります。また、読み込んだ曲途中のBank Select／Program Changeは保持するため、再生中に先頭の音色設定を上書きする場合があります。
+
+旧プロジェクトは保存されていた値を維持して読み込みます。新しい基本バンク制御を適用するには出力先を一度切り替えてください。SMFには現在の出力先で有効な先頭バンク設定を保存し、出力先ごとの履歴は独自プロジェクトだけに保存します。
+
+内部プレビューへの実際のMIDI送信でもMSB 121／120とLSB 0を使います。未対応のJUNOバンク番号はGM基本バンクへ正規化します。ただし、macOS標準DLS音源のGM2派生音色・全ドラムキットの忠実な再現は保証しません。macOS実発音・JUNO実機での最終確認は必要です。
