@@ -1,4 +1,4 @@
-# JUNO Sketch v0.1.1
+# JUNO Sketch v0.1.2
 
 JUNO-DS用の小さなPython/Tkinter MIDIシーケンサーです。16トラック、ピアノロール、通常／三連符Grid、Slip、Velocity、SMF Type 1、JSONプロジェクトを実装しています。
 
@@ -125,3 +125,28 @@ SMF出力はType 1、PPQ 960。テンポ／拍子のconductor＋16のMIDIトラ�
 ```
 
 `dist/JunoSketch.app` を更新してください。
+
+## v0.1.2：音色名をトラック名へ適用
+
+トラック設定のBank MSB／LSB／Programから、JUNO-DS公式Parameter Guideの音色表を参照します。DS 184音色、PRST 1,088音色、GM 256音色とドラム39キット（計1,567件）を同梱し、実行時にネット接続は不要です。
+
+1. Bank MSB／LSB／Programを入力します。直下の `JUNO:` 表示に音色名が出ます。
+2. 「音色名をトラック名へ適用」を押すと、入力済みのトラック設定と音色名を適用します。このボタン自体はMIDIを送信しないため、JUNO未接続でも使えます。
+3. 「音色変更時に名前を追従」をオンにすると、「設定を適用・音色送信」で音色設定を変える際にトラック名も更新します。追従はトラックごとに保持します。
+4. 任意の名前は `Name` 欄に入力し、「設定を適用・音色送信」で確定します。任意名を使い続ける場合は追従をオフにしてください。
+
+例：MSB **87**／LSB **73**／Program **1** → **Grand Pno DS**。同じProgram 1でもMSB 87／LSB 64なら **88StageGrand** です。画面はProgram 1–128、内部マップはMIDI値0–127です。
+
+ユーザー音色・サンプル・拡張音色の名前は本体の内容次第なので推測しません。未登録の組合せではトラック名を保持します。GMへ安易にフォールバックしないため、初期値MSB 0／LSB 0では「未登録」と表示されます。内部プレビューのGM相当音色名ではなく、設定したBank／Programに対応するJUNOの音色名です。曲途中のProgram Changeイベントには追従せず、トラック先頭の音色設定を使います。
+
+トラック名の変更はUndo／Redoに対応し、プロジェクトとSMFのトラック名に保存します。追従設定は独自プロジェクトにのみ保存します。v0.1／v0.1.1のプロジェクトは追従オフで読み込み、既存名を維持します。
+
+出典：Roland JUNO-DS Parameter Guide（2015版）、66–76ページ、Patch List／Drum Kit List。
+https://static.roland.com/assets/media/pdf/JUNO-DS_ParamGuide_e01_W.pdf
+`assets/juno_ds_patches.json` に番号対応の事実データのみを格納しています。マニュアル本文・PDF・音声データは同梱していません。音色名はRolandの製品表記です。PDFの曲線アポストロフィ2件はSMF保存互換のためASCIIへ正規化しています。
+
+更新時は `assets/`、`services/`、`models/`、`ui/` と `JunoSketch.spec` を含めてソース全体を更新してください。音色マップはspecで.app内へ同梱します。
+
+```bash
+.venv/bin/python -m PyInstaller --clean --noconfirm JunoSketch.spec
+```

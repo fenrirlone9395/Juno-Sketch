@@ -89,3 +89,29 @@ def test_layers_and_all_track_playback_view(tmp_path):
     finally:
         app.player.playing=False
         app.stop();app.release_output();app.destroy()
+
+
+def test_apply_patch_name_and_auto_follow():
+    from ui.main_window import MainWindow
+    from test_core import Capture
+    app=MainWindow()
+    try:
+        out=Capture();app.output=out
+        app.fields['msb'].set('87');app.fields['lsb'].set('73');app.fields['program'].set('1')
+        assert 'Grand Pno DS' in app.patch_label.get()
+        app.apply_patch_name()
+        assert app.track.name=='Grand Pno DS'
+        assert not out.messages  # Renaming does not require hardware or sound output.
+        assert 'Grand Pno DS' in app.list.get(0)
+        app.auto_name_var.set(True);app.naming_change()
+        app.fields['program'].set('2');app.apply_track()
+        assert app.track.name=='Rock Pno DS'
+        app.auto_name_var.set(False);app.naming_change()
+        app.name_var.set('My Piano');app.fields['program'].set('3');app.apply_track()
+        assert app.track.name=='My Piano'
+        app.fields['msb'].set('0');app.apply_patch_name()
+        assert app.track.name=='My Piano'
+        app.undo()
+        assert app.track.program==1
+    finally:
+        app.stop();app.release_output();app.destroy()

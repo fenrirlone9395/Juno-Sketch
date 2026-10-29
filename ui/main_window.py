@@ -4,7 +4,7 @@ from pathlib import Path
 import mido
 from models.project import Project, GRIDS, PPQ
 from services.undo import History
-from services import project_io
+from services import project_io, patch_names
 from midi import smf
 from midi.player import Player
 from midi.internal_preview import InternalPreviewOutput
@@ -16,7 +16,7 @@ from ui.track_colors import track_color
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('JUNO Sketch • v0.1.1')
+        self.title('JUNO Sketch • v0.1.2')
         self.geometry('1240x820')
         self.minsize(940,620)
         self.project=Project();self.history=History();self.player=Player()
@@ -31,21 +31,35 @@ class MainWindow(tk.Tk):
         self.list=tk.Listbox(left,exportselection=False,height=16,width=25)
         self.list.pack(fill='x',pady=8)
         self.list.bind('<<ListboxSelect>>',self.select_track)
+        self.name_var=tk.StringVar()
+        name_row=ttk.Frame(left);name_row.pack(fill='x',pady=3)
+        ttk.Label(name_row,text='Name').pack(side='left')
+        name_entry=ttk.Entry(name_row,textvariable=self.name_var,width=18)
+        name_entry.pack(side='right')
+        name_entry.bind('<Return>',lambda e:self.apply_track())
         self.fields={}
         for key,label,low,high in [('channel','Channel',1,16),('msb','Bank MSB',0,127),('lsb','Bank LSB',0,127),('program','Program (1–128)',1,128),('velocity','Default Velocity',1,127)]:
             row=ttk.Frame(left);row.pack(fill='x',pady=3)
             ttk.Label(row,text=label).pack(side='left')
             v=tk.StringVar();self.fields[key]=v
             ttk.Spinbox(row,textvariable=v,from_=low,to=high,width=5).pack(side='right')
+        self.patch_label=tk.StringVar(value='')
+        ttk.Label(left,textvariable=self.patch_label,wraplength=205).pack(fill='x',pady=3)
+        self.auto_name_var=tk.BooleanVar(value=False)
+        ttk.Checkbutton(left,text='音色変更時に名前を追従',variable=self.auto_name_var,
+                        command=self.naming_change).pack(anchor='w')
+        ttk.Button(left,text='音色名をトラック名へ適用',command=self.apply_patch_name).pack(fill='x',pady=3)
+        for key in ('msb','lsb','program'):
+            self.fields[key].trace_add('write',lambda *args:self.update_patch_label())
         ttk.Button(left,text='設定を適用・音色送信',command=self.apply_track).pack(fill='x',pady=10)
-        ttk.Label(left,text='空白をダブルクリック：作成\nノート中央：移動\n右端：長さ変更\nShiftクリック／囲む：複数選択\n右クリック／Delete：削除\n下のバー：Velocity\nルーラー：再生開始位置\nホイール：上下移動\nShift＋ホイール：左右移動',justify='left').pack(anchor='w',pady=8)
+        ttk.Label(left,text='ダブルクリック：作成 / 右端：長さ\nShiftクリック／囲む：複数選択\n詳しい操作はHelpメニュー',justify='left').pack(anchor='w',pady=8)
         self.editor_body=ttk.Frame(body)
         self.editor_body.pack(side='left',fill='both',expand=True)
         self.roll=PianoRoll(self.editor_body,self)
         self.overview=TrackOverview(self.editor_body,self)
         self.roll.pack(fill='both',expand=True)
         self.status=tk.StringVar(value='Ready • 4/4 • PPQ 960')
-        ttk.Label(self,textvariable=self.status,anchor='w',padding=6).pack(fill='x')
+        ttk.Label(self,textvariable=self.status,anchor='w',padding=6).pack(side='bottom',fill='x',before=body)
         for key in ('<Delete>','<BackSpace>'):
             self.bind(key,self.delete_key)
         self.bind('<space>',self.space)
@@ -110,6 +124,8 @@ class MainWindow(tk.Tk):
         for i in range(16):
             self.list.itemconfigure(i,foreground=track_color(i),background='#20252d',selectbackground='#434b59',selectforeground=track_color(i))
         index=self.project.ui['selected'];self.list.selection_set(index)
+        self.name_var.set(self.track.name)
+        self.auto_name_var.set(self.track.auto_name)
         self.fields['channel'].set(self.track.channel+1)
         for k in ('msb','lsb','velocity'):self.fields[k].set(getattr(self.track,k))
         self.fields['program'].set(self.track.program+1)
@@ -156,14 +172,48 @@ class MainWindow(tk.Tk):
     def changed(self):
         self.dirty=True
         self.title(f'JUNO Sketch • {self.path.name if self.path else "Untitled"} *')
+    def track_values(self):
+        vals={k:int(v.get()) for k,v in self.fields.items()}
+        vals['channel']-=1;vals['program']-=1
+        if not (0<=vals['channel']<16 and 0<=vals['program']<128 and all(0<=vals[k]<=127 for k in ('msb','lsb')) and 1<=vals['velocity']<=127):
+            raise ValueError('設定値が範囲外です')
+        return vals
+    def update_patch_label(self):
+        try:
+            msb=int(self.fields['msb'].get())
+            lsb=int(self.fields['lsb'].get())
+            program=int(self.fields['program'].get())-1
+            patch=patch_names.lookup(msb,lsb,program)
+            text=f"JUNO: {patch['name']} ({patch['bank']})" if patch else 'JUNO: 未登録のBank / Program'
+        except ValueError:
+            text='JUNO: —'
+        self.patch_label.set(text)
+    def naming_change(self):
+        self.checkpoint()
+        self.track.auto_name=self.auto_name_var.get()
+        self.changed()
+    def apply_patch_name(self):
+        def action():
+            vals=self.track_values()
+            patch=patch_names.lookup(vals['msb'],vals['lsb'],vals['program'])
+            if patch is None:
+                self.status.set('未登録のBank / Programです。トラック名は変更しません。')
+                return
+            self.checkpoint()
+            for k,v in vals.items():setattr(self.track,k,v)
+            self.track.auto_name=self.auto_name_var.get()
+            patch_names.apply_name(self.track)
+            self.changed();self.sync_ui()
+            self.status.set('音色名をトラック名に適用しました（MIDI送信なし）')
+        self.guarded(action)
     def apply_track(self):
         def action():
-            vals={k:int(v.get()) for k,v in self.fields.items()}
-            vals['channel']-=1;vals['program']-=1
-            if not (0<=vals['channel']<16 and 0<=vals['program']<128 and all(0<=vals[k]<=127 for k in ('msb','lsb')) and 1<=vals['velocity']<=127):
-                raise ValueError('設定値が範囲外です')
+            vals=self.track_values()
             self.stop();self.checkpoint()
             for k,v in vals.items():setattr(self.track,k,v)
+            self.track.name=self.name_var.get().strip() or self.track.name
+            self.track.auto_name=self.auto_name_var.get()
+            if self.track.auto_name:patch_names.apply_name(self.track)
             self.changed();self.sync_ui()
             self.ensure_output().setup(self.track)
         self.guarded(action)

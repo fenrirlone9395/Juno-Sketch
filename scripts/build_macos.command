@@ -9,5 +9,5 @@ PYTHON_BIN="${JUNO_PYTHON:-python3}"
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python -c 'import tkinter; import rtmidi'
 .venv/bin/python -m pytest -q
-.venv/bin/python -m PyInstaller --noconfirm JunoSketch.spec
+.venv/bin/python -m PyInstaller --clean --noconfirm JunoSketch.spec
 open dist

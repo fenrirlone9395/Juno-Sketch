@@ -23,6 +23,7 @@ class Track:
     velocity: int = 100
     notes: list[Note] = field(default_factory=list)
     events: list = field(default_factory=list)
+    auto_name: bool = False
 
 @dataclass
 class Project:
@@ -48,6 +49,8 @@ class Project:
             track = Track(**t)
             if not (0 <= track.channel <= 15 and all(0 <= x <= 127 for x in (track.msb, track.lsb, track.program)) and 1 <= track.velocity <= 127):
                 raise ValueError('不正なトラック設定です')
+            if not isinstance(track.auto_name, bool):
+                raise ValueError('不正な音色名追従設定です')
             for n in track.notes:
                 if not (n.start >= 0 and n.duration >= 1 and 0 <= n.pitch <= 127 and 1 <= n.velocity <= 127):
                     raise ValueError('不正なノートです')
