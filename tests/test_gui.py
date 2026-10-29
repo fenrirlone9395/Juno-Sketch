@@ -282,3 +282,73 @@ def test_zoom_anchor_scroll_synchronization_and_saved_ui(tmp_path):
         assert r.ROW==16 and r.SCALE==pytest.approx(.1)
     finally:
         app.stop();app.release_output();app.destroy()
+
+
+def test_transport_keys_preempt_focused_controls_and_preserve_text():
+    from ui.main_window import MainWindow
+    from tkinter import ttk
+    app=MainWindow()
+    try:
+        app.update()
+        toggles=[]
+        app.toggle=lambda:toggles.append('toggle')
+        # A real class binding would toggle this checkbox without the early tag.
+        for control in (app.ghost_button,app.solo_button,app.mute_button):
+            control.focus_force();app.update()
+            before=app.project.data()
+            for sequence in ('<KeyPress-space>','<KeyRelease-space>'):
+                control.event_generate(sequence);app.update()
+            assert app.project.data()==before
+        assert len(toggles)==3
+        app.solo_button.invoke();app.update()
+        assert app.track.solo and app.solo_button.cget('relief')=='sunken'
+        app.solo_button.invoke();app.update()
+        assert not app.track.solo and app.solo_button.cget('relief')=='raised'
+        entries=[]
+        def collect(w):
+            if isinstance(w,ttk.Entry):entries.append(w)
+            for c in w.winfo_children():collect(c)
+        collect(app)
+        entry=next(w for w in entries if str(w.cget('textvariable'))==str(app.name_var))
+        entry.focus_force();app.update();entry.icursor('end')
+        old=entry.get()
+        entry.event_generate('<KeyPress-space>');entry.event_generate('<KeyRelease-space>');app.update()
+        assert entry.get()==old+' ' and len(toggles)==3
+    finally:
+        app.stop();app.release_output();app.destroy()
+
+
+def test_piano_roll_follow_and_return_to_start():
+    from ui.main_window import MainWindow
+    from models.project import Note
+    app=MainWindow()
+    try:
+        app.track.notes=[Note(40*3840,60,960)]
+        app.sync_ui();app.update();r=app.roll
+        app.player.cursor=lambda:80000
+        app.player.playing=True
+        app.draw_cursors(80000);app.update()
+        x=r.KEY+80000*r.SCALE
+        assert r.canvas.canvasx(r.KEY)<=x<=r.canvas.canvasx(r.canvas.winfo_width()-20)
+        assert r.velocity.xview()[0]==pytest.approx(r.canvas.xview()[0],abs=.001)
+        r.xview('moveto',0);app.project.ui['follow_playhead']=False
+        app.draw_cursors(80000);app.update()
+        assert r.canvas.xview()[0]==0
+        app.player.playing=False
+        app.playhead=80000;r.xview('moveto',.3)
+        r.selected={app.track.notes[0].id}
+        r.canvas.focus_force();app.update()
+        r.canvas.event_generate('<Return>');app.update()
+        assert app.playhead==80000
+        r.selected.clear()
+        r.canvas.event_generate('<Return>');app.update()
+        assert app.playhead==0 and app.player.position==0
+        assert r.canvas.xview()[0]==0 and r.velocity.xview()[0]==0
+        app.view_var.set('All Tracks');app.view_change();app.update()
+        app.playhead=20000;app.overview.canvas.xview_moveto(.3)
+        app.overview.canvas.focus_force();app.update()
+        app.overview.canvas.event_generate('<Return>');app.update()
+        assert app.playhead==0 and app.overview.canvas.xview()[0]==0
+    finally:
+        app.player.playing=False
+        app.stop();app.release_output();app.destroy()

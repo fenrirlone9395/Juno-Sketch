@@ -237,10 +237,16 @@ class PianoRoll(tk.Frame):
         for n in sorted(self.track.notes,key=lambda n:n.id in self.selected):
             x=self.KEY+n.start*self.SCALE
             v.create_rectangle(x,105-n.velocity/127*85,x+6,105,fill='#f2b961' if n.id in self.selected else '#55b4bb',outline='')
-    def cursor(self,tick):
+    def cursor(self,tick,follow=False):
         c=self.canvas
         c.delete('playhead')
         x=self.KEY+tick*self.SCALE
+        if follow:
+            left=c.canvasx(0)
+            available=max(1,c.winfo_width()-self.KEY)
+            if x<left+self.KEY or x>left+c.winfo_width()-20:
+                total=float(c.cget('scrollregion').split()[2])
+                self.xview('moveto',max(0,(x-self.KEY-available*.15)/total))
         c.create_line(x,0,x,self.TOP+128*self.ROW,fill='#ff6b73',width=2,tags='playhead')
     def down(self,e):
         self.canvas.focus_set()

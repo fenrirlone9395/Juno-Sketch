@@ -1,4 +1,4 @@
-# JUNO Sketch v0.1.5
+# JUNO Sketch v0.1.6
 
 JUNO-DS用の小さなPython/Tkinter MIDIシーケンサーです。16トラック、ピアノロール、通常／三連符Grid、Slip、Velocity、SMF Type 1、JSONプロジェクトを実装しています。
 
@@ -236,3 +236,11 @@ Ctrl＋ホイールでポインター位置を基準に時間方向を拡縮、C
 ```bash
 .venv/bin/python -m PyInstaller --clean --noconfirm JunoSketch.spec
 ```
+
+
+## v0.1.6 操作修正
+
+- Spaceはチェックボックスやボタンにフォーカスがあっても再生／停止だけを操作します。名前や数値の入力中は入力を優先します。
+- Solo／Muteはラッチ式ボタンです。押し込み＋ONが有効、浮き上がりが無効、±は複数選択内で状態が混在しています。
+- 「再生位置に追従」はPiano Roll／All Tracks共通です。カーソルが画面の表示範囲を外れたら横方向に画面を送ります。Velocityレーンと小節表示も同期します。
+- ノート未選択時のEnter（テンキーEnterも可）で停止して曲頭へ戻り、横スクロールも先頭へ戻します。All Tracksでも使用できます。トラックの選択は維持します。入力欄でのEnterは従来の確定操作です。

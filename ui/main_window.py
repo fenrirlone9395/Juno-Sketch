@@ -19,7 +19,7 @@ from ui.track_colors import track_color
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('JUNO Sketch • v0.1.5')
+        self.title('JUNO Sketch • v0.1.6')
         self.geometry('1240x820')
         self.minsize(940,620)
         self.project=Project();self.history=History();self.player=Player()
@@ -42,10 +42,10 @@ class MainWindow(tk.Tk):
         ttk.Label(left,textvariable=self.selection_status).pack(anchor='w')
         states=ttk.Frame(left);states.pack(fill='x',pady=2)
         self.solo_var=tk.BooleanVar(value=False);self.mute_var=tk.BooleanVar(value=False)
-        self.solo_button=ttk.Checkbutton(states,text='S Solo',variable=self.solo_var,
-                                       command=lambda:self.set_play_state('solo',self.solo_var.get()))
-        self.mute_button=ttk.Checkbutton(states,text='M Mute',variable=self.mute_var,
-                                       command=lambda:self.set_play_state('muted',self.mute_var.get()))
+        self.solo_button=tk.Button(states,text='S Solo',width=9,takefocus=False,
+                                   command=lambda:self.toggle_play_state('solo'))
+        self.mute_button=tk.Button(states,text='M Mute',width=9,takefocus=False,
+                                   command=lambda:self.toggle_play_state('muted'))
         self.solo_button.pack(side='left');self.mute_button.pack(side='left',padx=12)
         self.name_var=tk.StringVar()
         name_row=ttk.Frame(left);name_row.pack(fill='x',pady=3)
@@ -79,7 +79,7 @@ class MainWindow(tk.Tk):
         ttk.Label(self,textvariable=self.status,anchor='w',padding=6).pack(side='bottom',fill='x',before=body)
         for key in ('<Delete>','<BackSpace>'):
             self.bind(key,self.delete_key)
-        self.bind('<space>',self.space)
+        self.install_transport_keys()
         for modifier in ('Command','Control'):
             for key,func in [('z',self.undo),('Z',self.redo),('s',self.save),('o',self.open),('n',self.new)]:
                 self.bind(f'<{modifier}-{key}>',lambda e,f=func:self.shortcut(f))
@@ -135,7 +135,7 @@ class MainWindow(tk.Tk):
         self.ghost_button=ttk.Checkbutton(views,text='他トラックをレイヤー表示',variable=self.ghost_var,command=self.layer_change)
         self.ghost_button.pack(side='left',padx=10)
         self.follow_var=tk.BooleanVar(value=True)
-        ttk.Checkbutton(views,text='全体表示で再生位置に追従',variable=self.follow_var,command=self.follow_change).pack(side='left',padx=10)
+        ttk.Checkbutton(views,text='再生位置に追従',variable=self.follow_var,command=self.follow_change).pack(side='left',padx=10)
         ttk.Label(views,text='All Tracks: 16トラック表示 / ダブルクリックで編集').pack(side='left',padx=8)
     def selected_track_indices(self):
         active=self.project.ui['selected']
@@ -162,7 +162,13 @@ class MainWindow(tk.Tk):
         for attr,var,button in [('solo',self.solo_var,self.solo_button),('muted',self.mute_var,self.mute_button)]:
             values=[getattr(self.project.tracks[i],attr) for i in selection]
             var.set(all(values))
-            button.state(['alternate'] if any(values) and not all(values) else ['!alternate'])
+            mixed=any(values) and not all(values)
+            label='S Solo' if attr=='solo' else 'M Mute'
+            color='#e9bf55' if attr=='solo' else '#ed8b79'
+            button.configure(text=label+(' ±' if mixed else ' ON' if all(values) else ''),
+                             relief='sunken' if all(values) else 'raised',
+                             background=color if all(values) else '#d9d9d9',
+                             activebackground=color if all(values) else '#ececec')
         first=MeterMap(self.project.signatures).segments[0]
         self.meter_button.configure(text=f'拍子 {first.numerator}/{first.denominator}…')
         self.name_var.set(self.track.name)
@@ -206,8 +212,10 @@ class MainWindow(tk.Tk):
     def follow_change(self):
         self.project.ui['follow_playhead']=self.follow_var.get();self.changed()
     def draw_cursors(self,tick):
-        self.roll.cursor(tick)
-        self.overview.cursor(tick,follow=self.player.playing and self.project.ui.get('view')=='All Tracks' and self.project.ui.get('follow_playhead',True))
+        follow=self.player.playing and self.project.ui.get('follow_playhead',True)
+        overview=self.project.ui.get('view')=='All Tracks'
+        self.roll.cursor(tick,follow=follow and not overview)
+        self.overview.cursor(tick,follow=follow and overview)
     def remember_track_click(self,event):
         self._track_click_index=self.list.nearest(event.y)
     def select_track(self,e):
@@ -224,6 +232,9 @@ class MainWindow(tk.Tk):
         self.project.ui['selected']=active
         self.project.ui['track_selection']=selection
         self.sync_ui(clear_notes=changed_active)
+    def toggle_play_state(self,attr):
+        values=[getattr(self.project.tracks[i],attr) for i in self.selected_track_indices()]
+        self.set_play_state(attr,not all(values))
     def set_play_state(self,attr,value):
         def action():
             if attr not in ('muted','solo'):raise ValueError('不正な再生状態です')
@@ -429,7 +440,7 @@ class MainWindow(tk.Tk):
         self.end_audition()
         if self.output:self.output.panic()
     def set_playhead(self,tick):
-        self.stop();self.playhead=tick;self.draw_cursors(tick)
+        self.stop();self.playhead=tick;self.player.position=tick;self.draw_cursors(tick)
     def poll(self):
         if self.player.playing:
             cursor=self.player.cursor();self.draw_cursors(cursor)
@@ -442,6 +453,29 @@ class MainWindow(tk.Tk):
         while not self.player.errors.empty():
             self.status.set('出力エラー: '+self.player.errors.get())
         self.after(25,self.poll)
+    def install_transport_keys(self):
+        # Tk runs widget/class bindings before toplevel bindings. Intercept
+        # transport keys first so a focused checkbox/button cannot also activate.
+        tag='TransportKeys'
+        self.bind_class(tag,'<KeyPress-space>',self.space)
+        self.bind_class(tag,'<KeyRelease-space>',self.space_release)
+        self.bind_class(tag,'<Return>',self.return_to_start)
+        self.bind_class(tag,'<KP_Enter>',self.return_to_start)
+        def install(widget):
+            widget.bindtags((tag,)+widget.bindtags())
+            for child in widget.winfo_children():install(child)
+        install(self)
+    def space_release(self,event):
+        if not self.text_focus():return 'break'
+    def return_to_start(self,event):
+        if self.text_focus():return
+        # Track selection always exists; here “unselected” means no selected notes.
+        if self.project.ui.get('view')!='All Tracks' and self.roll.selected:return 'break'
+        self.set_playhead(0)
+        self.roll.xview('moveto',0)
+        self.overview.canvas.xview_moveto(0)
+        self.status.set('Stopped  1|1')
+        return 'break'
     def text_focus(self):
         return isinstance(self.focus_get(),(tk.Entry,ttk.Entry,ttk.Spinbox,ttk.Combobox))
     def delete_key(self,e):
