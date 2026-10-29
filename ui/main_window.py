@@ -19,7 +19,7 @@ from ui.track_colors import track_color
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('JUNO Sketch • v0.1.7')
+        self.title('JUNO Sketch • v0.1.8')
         self.geometry('1240x820')
         self.minsize(940,620)
         self.project=Project();self.history=History();self.player=Player()
@@ -69,7 +69,8 @@ class MainWindow(tk.Tk):
         for key in ('msb','lsb','program'):
             self.fields[key].trace_add('write',lambda *args:self.update_patch_label())
         ttk.Button(left,text='設定を適用・音色送信',command=self.apply_track).pack(fill='x',pady=10)
-        ttk.Label(left,text='ダブルクリック：作成 / 右端：長さ\nShiftクリック／囲む：複数選択\n詳しい操作はHelpメニュー',justify='left').pack(anchor='w',pady=8)
+        self.editor_help=tk.StringVar()
+        ttk.Label(left,textvariable=self.editor_help,justify='left').pack(anchor='w',pady=8)
         self.editor_body=ttk.Frame(body)
         self.editor_body.pack(side='left',fill='both',expand=True)
         self.roll=PianoRoll(self.editor_body,self)
@@ -104,7 +105,7 @@ class MainWindow(tk.Tk):
         edit.add_command(label='Undo',command=self.undo);edit.add_command(label='Redo',command=self.redo)
         edit.add_command(label='Select All Notes',command=self.select_all)
         helpmenu=tk.Menu(bar,tearoff=False);bar.add_cascade(label='Help',menu=helpmenu)
-        helpmenu.add_command(label='操作方法',command=lambda:messagebox.showinfo('JUNO Sketch','空白をダブルクリックしてノート作成。\nGrid / Slip と三連符は上部で切替。\nMIDI Channelは1–16、Programは1–128で表示。\n内部音源はGMの近似音色です。JUNOの音色とは異なります。\nJUNOはPerformanceの16パートで受信する設定にしてください。'))
+        helpmenu.add_command(label='操作方法',command=lambda:messagebox.showinfo('JUNO Sketch','Piano Roll: 空白をダブルクリックして作成。\nDrum Editor: 空白をクリック、楽器名を押して試聴。\nShift＋空白ドラッグで範囲選択。\nGrid / Slip と三連符は上部で切替。\nMIDI Channelは1–16、Programは1–128で表示。\n内部音源はGMの近似音色です。JUNOの音色とは異なります。\nJUNOはPerformanceの16パートで受信する設定にしてください。'))
     def build_toolbar(self):
         top=ttk.Frame(self,padding=8);top.pack(fill='x')
         ttk.Button(top,text='▶ / ■ Space',command=lambda:self.guarded(self.toggle)).pack(side='left')
@@ -127,7 +128,7 @@ class MainWindow(tk.Tk):
         views=ttk.Frame(self,padding=(8,0,8,6));views.pack(fill='x')
         ttk.Label(views,text='View').pack(side='left')
         self.view_var=tk.StringVar(value='Piano Roll')
-        view=ttk.Combobox(views,textvariable=self.view_var,values=['Piano Roll','All Tracks'],state='readonly',width=13)
+        view=ttk.Combobox(views,textvariable=self.view_var,values=['Piano Roll','Drum Editor','All Tracks'],state='readonly',width=13)
         view.pack(side='left',padx=6);view.bind('<<ComboboxSelected>>',self.view_change)
         self.meter_button=ttk.Button(views,text='拍子 4/4…',command=self.meter_dialog)
         self.meter_button.pack(side='left',padx=6)
@@ -136,7 +137,8 @@ class MainWindow(tk.Tk):
         self.ghost_button.pack(side='left',padx=10)
         self.follow_var=tk.BooleanVar(value=True)
         ttk.Checkbutton(views,text='再生位置に追従',variable=self.follow_var,command=self.follow_change).pack(side='left',padx=10)
-        ttk.Label(views,text='All Tracks: 16トラック表示 / ダブルクリックで編集').pack(side='left',padx=8)
+        self.view_hint=ttk.Label(views,text='All Tracks: ダブルクリックで編集')
+        self.view_hint.pack(side='left',padx=8)
     def selected_track_indices(self):
         active=self.project.ui['selected']
         selection=set(self.project.ui.get('track_selection',[active]))
@@ -183,14 +185,20 @@ class MainWindow(tk.Tk):
         self.view_var.set(self.project.ui.get('view','Piano Roll'))
         self.ghost_var.set(self.project.ui.get('show_ghosts',True))
         self.follow_var.set(self.project.ui.get('follow_playhead',True))
-        self.roll.sync_zoom()
+        layout_changed=self.roll.KEY!=(210 if self.project.ui.get('view')=='Drum Editor' else 62)
         if clear_notes:self.roll.selected.clear()
         self.roll.drag=None;self.roll.vel_drag=False
+        self.roll.sync_zoom()
         self.show_view()
         self.roll.redraw();self.overview.redraw()
+        if layout_changed:self.restore_editor_view()
         self.draw_cursors(self.player.cursor() if self.player.playing else self.playhead)
     def show_view(self):
         overview=self.project.ui.get('view','Piano Roll')=='All Tracks'
+        drum=self.project.ui.get('view')=='Drum Editor'
+        self.view_hint.configure(text='GM参考名 / ドラム音色を設定してください' if drum else 'All Tracks: ダブルクリックで編集')
+        gesture='クリック：作成 / 楽器名：試聴' if drum else 'ダブルクリック：作成 / 右端：長さ'
+        self.editor_help.set(gesture+'\nShiftクリック／囲む：複数選択\n詳しい操作はHelpメニュー')
         if overview:
             self.roll.pack_forget();self.overview.pack(fill='both',expand=True)
             self.ghost_button.state(['disabled'])
@@ -198,10 +206,14 @@ class MainWindow(tk.Tk):
             self.overview.pack_forget();self.roll.pack(fill='both',expand=True)
             self.ghost_button.state(['!disabled'])
     def view_change(self,e=None):
+        self.capture_view()
+        self.end_audition();self.roll.key_held=False;self.roll.preview_pitch=None
         self.project.ui['view']=self.view_var.get()
         self.roll.drag=None;self.roll.vel_drag=False
+        self.roll.sync_zoom()
         self.show_view()
         self.roll.redraw();self.overview.redraw()
+        self.restore_editor_view()
         self.draw_cursors(self.player.cursor() if self.player.playing else self.playhead)
         self.changed()
         self.focus_set()
@@ -535,13 +547,21 @@ class MainWindow(tk.Tk):
         path=filedialog.asksaveasfilename(defaultextension='.mid',filetypes=[('MIDI Type 1','*.mid')])
         if path:smf.save(self.project,path);self.status.set('SMF Type 1を保存しました')
     def capture_view(self):
-        self.project.ui.update(geometry=self.geometry(),xview=self.roll.canvas.xview()[0],yview=self.roll.canvas.yview()[0],overview_xview=self.overview.canvas.xview()[0])
-    def restore_view(self):
         ui=self.project.ui
-        if 'geometry' in ui:self.geometry(ui['geometry'])
-        self.roll.canvas.xview_moveto(ui.get('xview',0));self.roll.velocity.xview_moveto(ui.get('xview',0))
-        self.roll.canvas.yview_moveto(ui.get('yview',0.43))
+        ui.update(geometry=self.geometry(),overview_xview=self.overview.canvas.xview()[0])
+        if ui.get('view')!='All Tracks':
+            prefix='drum_' if ui.get('view')=='Drum Editor' else ''
+            ui[prefix+'xview']=self.roll.canvas.xview()[0]
+            ui[prefix+'yview']=self.roll.canvas.yview()[0]
+    def restore_editor_view(self):
+        ui=self.project.ui
+        prefix='drum_' if ui.get('view')=='Drum Editor' else ''
+        self.roll.xview('moveto',ui.get(prefix+'xview',0))
+        self.roll.canvas.yview_moveto(ui.get(prefix+'yview',0 if prefix else 0.43))
         self.overview.canvas.xview_moveto(ui.get('overview_xview',0))
+    def restore_view(self):
+        if 'geometry' in self.project.ui:self.geometry(self.project.ui['geometry'])
+        self.restore_editor_view()
     def close(self):
         if self.confirm_discard():
             self.stop();self.release_output();self.destroy()

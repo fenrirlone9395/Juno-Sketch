@@ -67,7 +67,7 @@ class Project:
         p.ui.update(data.get('ui', {}))
         if p.ui['grid'] not in GRIDS or p.ui['mode'] not in ('Grid', 'Slip') or not 0 <= p.ui['selected'] < 16:
             raise ValueError('不正なUI設定です')
-        if (p.ui['view'] not in ('Piano Roll', 'All Tracks')
+        if (p.ui['view'] not in ('Piano Roll', 'Drum Editor', 'All Tracks')
                 or not isinstance(p.ui['show_ghosts'], bool)
                 or not isinstance(p.ui['follow_playhead'], bool)):
             raise ValueError('不正な表示設定です')

@@ -3,6 +3,8 @@ from tkinter import ttk
 from copy import deepcopy
 from models.project import Note, PPQ, GRIDS
 from services.meter import MeterMap
+from services.output_mode import is_drum
+from ui.drum_editor import DrumLayout
 from ui.track_colors import track_color, ghost_color, project_end
 
 class PianoRoll(tk.Frame):
@@ -23,7 +25,7 @@ class PianoRoll(tk.Frame):
         ttk.Button(toolbar,text='−',width=3,command=lambda:self.zoom(horizontal=1/1.25)).pack(side='left')
         ttk.Button(toolbar,text='+',width=3,command=lambda:self.zoom(horizontal=1.25)).pack(side='left')
         self.x_zoom_label=ttk.Label(toolbar,width=5);self.x_zoom_label.pack(side='left',padx=3)
-        ttk.Label(toolbar,text='鍵盤').pack(side='left',padx=(8,0))
+        ttk.Label(toolbar,text='行高').pack(side='left',padx=(8,0))
         ttk.Button(toolbar,text='−',width=3,command=lambda:self.zoom(vertical=1/1.25)).pack(side='left')
         ttk.Button(toolbar,text='+',width=3,command=lambda:self.zoom(vertical=1.25)).pack(side='left')
         self.y_zoom_label=ttk.Label(toolbar,width=5);self.y_zoom_label.pack(side='left',padx=3)
@@ -73,6 +75,26 @@ class PianoRoll(tk.Frame):
         self.canvas.yview_moveto(0.43)
     @property
     def track(self): return self.app.track
+    @property
+    def drum_mode(self):
+        return self.app.project.ui.get('view')=='Drum Editor'
+    @property
+    def base_row(self):
+        return DrumLayout.row_height if self.drum_mode else 16
+    def pitch_row(self,pitch):
+        return DrumLayout.row(pitch) if self.drum_mode else 127-pitch
+    def row_pitch(self,row):
+        row=max(0,min(127,row))
+        return DrumLayout.pitch(row) if self.drum_mode else 127-row
+    def draw_lane(self,pitch,width):
+        c=self.canvas;y=self.TOP+self.pitch_row(pitch)*self.ROW
+        if self.drum_mode:
+            c.create_rectangle(0,y,width,y+self.ROW,fill=DrumLayout.color(pitch),outline='#505763')
+            return
+        black=pitch%12 in (1,3,6,8,10)
+        c.create_rectangle(0,y,width,y+self.ROW,fill='#262c35' if black else '#303742',outline='#393f49')
+        c.create_rectangle(0,y,self.KEY,y+self.ROW,fill='#363b45' if black else '#d2d6dc',outline='#555c67')
+        if pitch%12==0:c.create_text(30,y+8,text=f'C{pitch//12-1}',fill='#222')
     def xchanged(self,first,last):
         self.hbar.set(first,last)
         self.velocity.xview_moveto(float(first))
@@ -84,7 +106,13 @@ class PianoRoll(tk.Frame):
         self.keys.delete('all')
         offset=self.canvas.canvasy(0)
         for pitch in range(128):
-            y=self.TOP+(127-pitch)*self.ROW-offset
+            y=self.TOP+self.pitch_row(pitch)*self.ROW-offset
+            if self.drum_mode:
+                self.keys.create_rectangle(0,y,self.KEY,y+self.ROW,
+                    fill='#bc914a' if pitch==self.preview_pitch else DrumLayout.color(pitch),outline='#505763')
+                self.keys.create_text(7,y+self.ROW/2,text=DrumLayout.label(pitch),
+                                      fill='#f0f2f5',anchor='w',tags='drum_label')
+                continue
             black=pitch%12 in (1,3,6,8,10)
             self.keys.create_rectangle(0,y,self.KEY,y+self.ROW,fill='#f2b961' if pitch==self.preview_pitch else ('#363b45' if black else '#d2d6dc'),outline='#555c67')
             if pitch%12==0:
@@ -106,10 +134,12 @@ class PianoRoll(tk.Frame):
         self.canvas.xview(*args)
         self.velocity.xview_moveto(self.canvas.xview()[0])
     def sync_zoom(self):
+        self.KEY=DrumLayout.label_width if self.drum_mode else 62
+        self.keys.place_configure(width=self.KEY)
         self.SCALE=0.10*self.app.project.ui.get('zoom_x',1.0)
-        self.ROW=max(8,min(40,round(16*self.app.project.ui.get('zoom_y',1.0))))
+        self.ROW=round(self.base_row*self.app.project.ui.get('zoom_y',1.0))
         self.x_zoom_label.configure(text=f'{self.SCALE/0.10:.0%}')
-        self.y_zoom_label.configure(text=f'{self.ROW/16:.0%}')
+        self.y_zoom_label.configure(text=f'{self.ROW/self.base_row:.0%}')
         self.horizontal_wheel.set(self.app.project.ui.get('wheel_horizontal',False))
     def wheel_mode_changed(self):
         self.app.project.ui['wheel_horizontal']=self.horizontal_wheel.get()
@@ -121,8 +151,8 @@ class PianoRoll(tk.Frame):
         anchor_tick=(c.canvasx(screen_x)-self.KEY)/self.SCALE
         anchor_row=(c.canvasy(screen_y)-self.TOP)/self.ROW
         x=1.0 if reset else max(0.25,min(4.0,self.SCALE/0.10*horizontal))
-        row=16 if reset else max(8,min(40,round(self.ROW*vertical)))
-        self.app.project.ui.update(zoom_x=x,zoom_y=row/16)
+        row=self.base_row if reset else max(self.base_row//2,min(self.base_row*2.5,round(self.ROW*vertical)))
+        self.app.project.ui.update(zoom_x=x,zoom_y=row/self.base_row)
         self.sync_zoom();self.redraw()
         region=[float(value) for value in c.cget('scrollregion').split()]
         c.xview_moveto(max(0,(self.KEY+anchor_tick*self.SCALE-screen_x)/region[2]))
@@ -160,7 +190,7 @@ class PianoRoll(tk.Frame):
     def key_pitch(self,event):
         y=self.canvas.canvasy(event.y)
         if not self.TOP<=y<self.TOP+128*self.ROW:return None
-        return 127-int((y-self.TOP)//self.ROW)
+        return self.row_pitch(int((y-self.TOP)//self.ROW))
     def key_down(self,event):
         self.keys.focus_set()
         pitch=self.key_pitch(event)
@@ -185,8 +215,8 @@ class PianoRoll(tk.Frame):
             return MeterMap(self.app.project.signatures).snap(t,step)
         return t
     def coords(self,n):
-        return (self.KEY+n.start*self.SCALE,self.TOP+(127-n.pitch)*self.ROW,
-                self.KEY+(n.start+n.duration)*self.SCALE,self.TOP+(128-n.pitch)*self.ROW-1)
+        return (self.KEY+n.start*self.SCALE,self.TOP+self.pitch_row(n.pitch)*self.ROW,
+                self.KEY+(n.start+n.duration)*self.SCALE,self.TOP+(self.pitch_row(n.pitch)+1)*self.ROW-1)
     def hit(self,x,y):
         return next((n for n in reversed(self.track.notes) if self.coords(n)[0]<=x<=self.coords(n)[2] and self.coords(n)[1]<=y<=self.coords(n)[3]),None)
     def redraw(self):
@@ -198,13 +228,7 @@ class PianoRoll(tk.Frame):
         width=self.KEY+end_tick*self.SCALE
         height=self.TOP+128*self.ROW
         c.configure(scrollregion=(0,0,width,height))
-        for pitch in range(128):
-            y=self.TOP+(127-pitch)*self.ROW
-            black=pitch%12 in (1,3,6,8,10)
-            c.create_rectangle(0,y,width,y+self.ROW,fill='#262c35' if black else '#303742',outline='#393f49')
-            c.create_rectangle(0,y,self.KEY,y+self.ROW,fill='#363b45' if black else '#d2d6dc',outline='#555c67')
-            if pitch%12==0:
-                c.create_text(30,y+8,text=f'C{pitch//12-1}',fill='#222')
+        for pitch in range(128):self.draw_lane(pitch,width)
         step=GRIDS[self.app.project.ui['grid']]
         previous_grid_x=-100
         for tick in meter.grid_ticks(end_tick,step):
@@ -218,7 +242,7 @@ class PianoRoll(tk.Frame):
         active = self.app.project.ui['selected']
         if self.app.project.ui.get('show_ghosts', True):
             for index, track in enumerate(self.app.project.tracks):
-                if index == active:
+                if index == active or (self.drum_mode and not is_drum(track)):
                     continue
                 for note in track.notes:
                     c.create_rectangle(*self.coords(note), fill=ghost_color(index),
@@ -257,6 +281,9 @@ class PianoRoll(tk.Frame):
         if x<self.KEY: return
         n=self.hit(x,y)
         shift=bool(e.state&1)
+        if self.drum_mode and n is None and not shift:
+            self.create_note(x,y)
+            return
         if n:
             if shift:
                 if n.id in self.selected: self.selected.remove(n.id)
@@ -282,9 +309,9 @@ class PianoRoll(tk.Frame):
             return
         originals=d['original']
         delta=round((x-d['x'])/self.SCALE)
-        pitch_delta=round((d['y']-y)/self.ROW)
-        min_pitch=min(n.pitch for n in originals.values());max_pitch=max(n.pitch for n in originals.values())
-        pitch_delta=max(-min_pitch,min(127-max_pitch,pitch_delta))
+        row_delta=round((y-d['y'])/self.ROW)
+        rows=[self.pitch_row(n.pitch) for n in originals.values()]
+        row_delta=max(-min(rows),min(127-max(rows),row_delta))
         anchor=min(n.start for n in originals.values())
         movement=self.snap(anchor+delta)-anchor
         movement=max(-anchor,movement)
@@ -293,13 +320,13 @@ class PianoRoll(tk.Frame):
             old=originals[n.id]
             if d['kind']=='move':
                 n.start=old.start+movement
-                n.pitch=old.pitch+pitch_delta
+                n.pitch=self.row_pitch(self.pitch_row(old.pitch)+row_delta)
             else:
                 n.duration=max(1,self.snap(old.start+old.duration+delta)-old.start)
-        if d['kind']=='move' and d.get('audition')!=pitch_delta:
-            d['audition']=pitch_delta
+        if d['kind']=='move' and d.get('audition')!=row_delta:
+            d['audition']=row_delta
             first=next(iter(originals.values()))
-            self.app.audition(first.pitch+pitch_delta,first.velocity)
+            self.app.audition(self.row_pitch(self.pitch_row(first.pitch)+row_delta),first.velocity)
         self.redraw()
     def up(self,e):
         if not self.drag: return
@@ -308,10 +335,16 @@ class PianoRoll(tk.Frame):
             self.app.history.push(d['before']);self.app.changed()
         self.redraw()
     def double(self,e):
+        if self.drum_mode:return 'break'  # First press already inserted the hit.
         x,y=self.canvas.canvasx(e.x),self.canvas.canvasy(e.y)
-        if x<self.KEY or y<self.TOP or self.hit(x,y): return
+        self.create_note(x,y)
+    def create_note(self,x,y):
+        if x<self.KEY or not self.TOP<=y<self.TOP+128*self.ROW or self.hit(x,y):return
+        start=self.snap((x-self.KEY)/self.SCALE)
+        pitch=self.row_pitch(int((y-self.TOP)//self.ROW))
+        if self.drum_mode and any(n.start==start and n.pitch==pitch for n in self.track.notes):return
         self.app.checkpoint()
-        n=Note(self.snap((x-self.KEY)/self.SCALE),max(0,min(127,127-int((y-self.TOP)//self.ROW))),GRIDS[self.app.project.ui['grid']],self.track.velocity)
+        n=Note(start,pitch,GRIDS[self.app.project.ui['grid']],self.track.velocity)
         self.track.notes.append(n)
         self.selected={n.id};self.drag=None
         self.app.audition(n.pitch,n.velocity)

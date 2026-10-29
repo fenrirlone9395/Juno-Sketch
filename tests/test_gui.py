@@ -388,3 +388,98 @@ def test_solo_mute_shortcuts_and_input_protection():
         assert entry.get()==old+'sm' and not app.track.solo and not app.track.muted
     finally:
         app.stop();app.release_output();app.destroy()
+
+
+def test_drum_editor_editing_preview_and_roundtrip(tmp_path):
+    from ui.main_window import MainWindow
+    from test_core import Capture
+    from services.project_io import load
+    from midi import smf
+    app=MainWindow()
+    try:
+        app.output=Capture();app.project.ui['selected']=9
+        app.sync_ui();app.update()
+        before=[(t.channel,t.msb,t.lsb,t.program) for t in app.project.tracks]
+        app.view_var.set('Drum Editor');app.view_change();app.update()
+        r=app.roll
+        assert r.drum_mode and r.KEY==210 and r.ROW==24
+        assert app.roll.winfo_ismapped() and not app.overview.winfo_ismapped()
+        assert before==[(t.channel,t.msb,t.lsb,t.program) for t in app.project.tracks]
+        labels=[r.keys.itemcget(i,'text') for i in r.keys.find_withtag('drum_label')]
+        assert '036  Bass Drum 1' in labels and '042  Closed Hi-Hat' in labels
+        def event(pitch,tick):
+            return NS(x=r.KEY+tick*r.SCALE-r.canvas.canvasx(0),
+                      y=r.TOP+r.pitch_row(pitch)*r.ROW+5-r.canvas.canvasy(0),state=0)
+        # Single-click insertion; a subsequent double-click adds no duplicate.
+        e=event(36,0);r.down(e);r.up(e);r.double(e)
+        assert len(app.track.notes)==1 and app.track.notes[0].pitch==36
+        assert app.output.messages[-1].type=='note_on'
+        assert app.output.messages[-1].channel==9
+        r.app.project.ui['grid']='1/16T'
+        e=event(42,160);r.down(e);r.up(e)
+        assert [(n.start,n.duration) for n in app.track.notes]==[(0,240),(160,160)]
+        r.down(event(36,20));r.motion(event(38,260));r.up(NS())
+        note=app.track.notes[0]
+        assert note.pitch==38 and note.start==320
+        r.vel_drag=True;r.vel_motion(NS(y=40));r.vel_up(NS())
+        assert note.velocity==97
+        # A numeric lane outside GM is still editable and never drops data.
+        r.canvas.yview_moveto(.3);app.update()
+        e=event(0,960);r.down(e);r.up(e)
+        assert any(n.pitch==0 for n in app.track.notes)
+        r.key_down(NS(y=event(0,0).y));r.key_up()
+        assert any(m.type=='note_on' and m.note==0 for m in app.output.messages)
+        app.path=tmp_path/'drums.juno.json';app.save()
+        restored=load(app.path)
+        assert restored.ui['view']=='Drum Editor' and restored.ui['drum_yview']>0
+        assert restored.tracks[9].notes==app.track.notes
+        smf.save(app.project,tmp_path/'drums.mid')
+        imported,_=smf.load(tmp_path/'drums.mid')
+        expected=sorted((n.start,n.pitch,n.duration,n.velocity) for n in app.track.notes)
+        assert sorted((n.start,n.pitch,n.duration,n.velocity) for n in imported.tracks[9].notes)==expected
+        # Same notes remain editable in the piano layout; view switches keep data.
+        app.view_var.set('Piano Roll');app.view_change();app.update()
+        assert not r.drum_mode and r.KEY==62 and r.ROW==16
+        assert sorted((n.start,n.pitch,n.duration,n.velocity) for n in app.track.notes)==expected
+        app.view_var.set('Drum Editor');app.view_change();app.update()
+        assert r.canvas.yview()[0]>0
+        r.delete();assert not any(n.pitch==0 for n in app.track.notes)
+        app.undo();assert any(n.pitch==0 for n in app.track.notes)
+        app.redo();assert not any(n.pitch==0 for n in app.track.notes)
+    finally:
+        app.stop();app.release_output();app.destroy()
+
+
+def test_drum_real_click_zoom_follow_and_group_edit():
+    from ui.main_window import MainWindow
+    from models.project import Note
+    from test_core import Capture
+    app=MainWindow()
+    try:
+        app.output=Capture();app.project.ui['selected']=9;app.sync_ui();app.update()
+        app.view_var.set('Drum Editor');app.view_change();app.update();r=app.roll
+        # Actual Tk click goes through the common editor's bindings.
+        x=r.KEY+5;y=r.TOP+r.pitch_row(36)*r.ROW+5
+        r.canvas.event_generate('<ButtonPress-1>',x=x,y=y)
+        r.canvas.event_generate('<ButtonRelease-1>',x=x,y=y);app.update()
+        assert len(app.track.notes)==1
+        n=app.track.notes[0]
+        app.track.notes.append(Note(480,42,240));r.redraw()
+        r.selected={note.id for note in app.track.notes}
+        r.down(NS(x=x,y=y,state=0));r.motion(NS(x=x+24,y=y+24,state=0));r.up(NS())
+        assert [(note.start,note.pitch) for note in app.track.notes]==[(240,37),(720,43)]
+        r.zoom(horizontal=1.25,vertical=1.25);app.update()
+        assert r.ROW==30 and r.KEY==210
+        app.track.notes.append(Note(80000,81,240));r.redraw()
+        app.player.cursor=lambda:70000;app.player.playing=True
+        app.draw_cursors(70000);app.update()
+        assert r.canvas.xview()[0]>0
+        app.player.playing=False
+        r.canvas.yview_moveto(.2);app.update()
+        before=(r.canvas.xview(),r.canvas.yview())
+        app.mute_button.invoke();app.update()
+        assert r.canvas.xview()==pytest.approx(before[0],abs=.001)
+        assert r.canvas.yview()==pytest.approx(before[1],abs=.001)
+    finally:
+        app.player.playing=False
+        app.stop();app.release_output();app.destroy()
