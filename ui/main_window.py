@@ -19,7 +19,7 @@ from ui.track_colors import track_color
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('JUNO Sketch • v0.1.6')
+        self.title('JUNO Sketch • v0.1.7')
         self.geometry('1240x820')
         self.minsize(940,620)
         self.project=Project();self.history=History();self.player=Player()
@@ -42,9 +42,9 @@ class MainWindow(tk.Tk):
         ttk.Label(left,textvariable=self.selection_status).pack(anchor='w')
         states=ttk.Frame(left);states.pack(fill='x',pady=2)
         self.solo_var=tk.BooleanVar(value=False);self.mute_var=tk.BooleanVar(value=False)
-        self.solo_button=tk.Button(states,text='S Solo',width=9,takefocus=False,
+        self.solo_button=tk.Button(states,text='Solo',width=9,takefocus=False,
                                    command=lambda:self.toggle_play_state('solo'))
-        self.mute_button=tk.Button(states,text='M Mute',width=9,takefocus=False,
+        self.mute_button=tk.Button(states,text='Mute',width=9,takefocus=False,
                                    command=lambda:self.toggle_play_state('muted'))
         self.solo_button.pack(side='left');self.mute_button.pack(side='left',padx=12)
         self.name_var=tk.StringVar()
@@ -163,10 +163,10 @@ class MainWindow(tk.Tk):
             values=[getattr(self.project.tracks[i],attr) for i in selection]
             var.set(all(values))
             mixed=any(values) and not all(values)
-            label='S Solo' if attr=='solo' else 'M Mute'
+            label='Solo' if attr=='solo' else 'Mute'
             color='#e9bf55' if attr=='solo' else '#ed8b79'
-            button.configure(text=label+(' ±' if mixed else ' ON' if all(values) else ''),
-                             relief='sunken' if all(values) else 'raised',
+            button.configure(text=label,
+                             relief='sunken' if all(values) else 'ridge' if mixed else 'raised',
                              background=color if all(values) else '#d9d9d9',
                              activebackground=color if all(values) else '#ececec')
         first=MeterMap(self.project.signatures).segments[0]
@@ -461,10 +461,17 @@ class MainWindow(tk.Tk):
         self.bind_class(tag,'<KeyRelease-space>',self.space_release)
         self.bind_class(tag,'<Return>',self.return_to_start)
         self.bind_class(tag,'<KP_Enter>',self.return_to_start)
+        for key,attr in [('s','solo'),('S','solo'),('m','muted'),('M','muted')]:
+            self.bind_class(tag,f'<KeyPress-{key}>',lambda e,a=attr:self.track_state_key(e,a))
         def install(widget):
             widget.bindtags((tag,)+widget.bindtags())
             for child in widget.winfo_children():install(child)
         install(self)
+    def track_state_key(self,event,attr):
+        # Keep text editing and Command/Control shortcuts (notably Save) intact.
+        if self.text_focus() or event.state & 0x0c:return
+        self.toggle_play_state(attr)
+        return 'break'
     def space_release(self,event):
         if not self.text_focus():return 'break'
     def return_to_start(self,event):

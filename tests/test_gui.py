@@ -352,3 +352,39 @@ def test_piano_roll_follow_and_return_to_start():
     finally:
         app.player.playing=False
         app.stop();app.release_output();app.destroy()
+
+
+def test_solo_mute_shortcuts_and_input_protection():
+    from ui.main_window import MainWindow
+    from tkinter import ttk
+    app=MainWindow()
+    try:
+        app.update();canvas=app.roll.canvas
+        assert app.solo_button.cget('text')=='Solo'
+        assert app.mute_button.cget('text')=='Mute'
+        app.project.ui['track_selection']=[0,1];app.sync_ui()
+        canvas.focus_force();app.update()
+        for key,attr in [('s','solo'),('m','muted')]:
+            canvas.event_generate(f'<KeyPress-{key}>');app.update()
+            assert all(getattr(t,attr) for t in app.project.tracks[:2])
+            canvas.event_generate(f'<KeyPress-{key.upper()}>');app.update()
+            assert not any(getattr(t,attr) for t in app.project.tracks[:2])
+        saves=[];app.save=lambda:saves.append(True)
+        # Existing command binding holds the original callable; test Control
+        # protection through an extra observable binding on the same toplevel.
+        app.bind('<Control-s>',lambda e:saves.append(True))
+        canvas.event_generate('<Control-s>');app.update()
+        assert saves and not app.track.solo
+        entries=[]
+        def collect(w):
+            if isinstance(w,ttk.Entry):entries.append(w)
+            for c in w.winfo_children():collect(c)
+        collect(app)
+        entry=next(w for w in entries if str(w.cget('textvariable'))==str(app.name_var))
+        entry.focus_force();app.update();entry.icursor('end')
+        old=entry.get()
+        for key in ('s','m'):entry.event_generate(f'<KeyPress-{key}>')
+        app.update()
+        assert entry.get()==old+'sm' and not app.track.solo and not app.track.muted
+    finally:
+        app.stop();app.release_output();app.destroy()
