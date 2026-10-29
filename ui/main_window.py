@@ -19,7 +19,7 @@ from ui.track_colors import track_color
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('JUNO Sketch • v0.1.8')
+        self.title('JUNO Sketch • v0.1.9')
         self.geometry('1240x820')
         self.minsize(940,620)
         self.project=Project();self.history=History();self.player=Player()
@@ -530,7 +530,11 @@ class MainWindow(tk.Tk):
     def save(self,save_as=False):
         path=self.path
         if not path or save_as:
-            result=filedialog.asksaveasfilename(defaultextension='.juno.json',filetypes=[('JUNO Sketch','*.juno.json')])
+            # No filetypes popup: Aqua Tk can let a compound-extension format
+            # field extend beyond the native save sheet. The filename carries it.
+            result=filedialog.asksaveasfilename(parent=self,title='Save Project',
+                defaultextension='.juno.json',
+                initialfile=self.path.name if self.path else 'Untitled.juno.json')
             if not result:return False
             path=Path(result)
         self.capture_view()

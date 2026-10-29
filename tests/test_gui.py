@@ -483,3 +483,27 @@ def test_drum_real_click_zoom_follow_and_group_edit():
     finally:
         app.player.playing=False
         app.stop();app.release_output();app.destroy()
+
+
+def test_project_save_dialog_omits_overflowing_format_popup(tmp_path,monkeypatch):
+    from ui.main_window import MainWindow
+    from services.project_io import load
+    import ui.main_window as window
+    app=MainWindow()
+    try:
+        options=[]
+        target=tmp_path/'Untitled.juno.json'
+        def choose(**kwargs):
+            options.append(kwargs)
+            return str(target)
+        monkeypatch.setattr(window.filedialog,'asksaveasfilename',choose)
+        assert app.save()
+        assert 'filetypes' not in options[-1]
+        assert options[-1]['initialfile']=='Untitled.juno.json'
+        assert options[-1]['defaultextension']=='.juno.json'
+        assert load(target).data()==app.project.data()
+        app.path=tmp_path/'My Song.juno.json'
+        assert app.save(True)
+        assert options[-1]['initialfile']=='My Song.juno.json'
+    finally:
+        app.stop();app.release_output();app.destroy()

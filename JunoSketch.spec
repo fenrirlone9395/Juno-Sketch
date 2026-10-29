@@ -9,5 +9,5 @@ exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='JunoSketch',
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='JunoSketch')
 app = BUNDLE(coll, name='JunoSketch.app', icon=None,
              bundle_identifier='jp.junosketch.desktop',
-             info_plist={'CFBundleShortVersionString': '0.1.8',
+             info_plist={'CFBundleShortVersionString': '0.1.9',
                          'NSHighResolutionCapable': True})

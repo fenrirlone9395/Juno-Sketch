@@ -1,4 +1,4 @@
-# JUNO Sketch v0.1.8
+# JUNO Sketch v0.1.9
 
 JUNO-DS用の小さなPython/Tkinter MIDIシーケンサーです。16トラック、ピアノロール、通常／三連符Grid、Slip、Velocity、SMF Type 1、JSONプロジェクトを実装しています。
 
@@ -264,3 +264,8 @@ Viewから **Drum Editor** を選びます。内部プレビューで始める�
 - Piano Rollと同じノートを編集する表示モードです。別形式への変換はありません。表示モードと各エディタのスクロール位置はプロジェクトに保存します。SMFでは通常のMIDIノートとして保存します。
 
 楽器名は**GM参考名**です。JUNO-DSの個別キットの割り当て表ではなく、選んだキットによって実音と異なる場合があります。必ずノート番号と試聴音を確認してください。GM参考表：[メーカーのGMノート割り当て資料](https://downloads.monoprice.com/files/manuals/625889_Manual_200630.pdf)。
+
+
+## v0.1.9
+
+macOSのプロジェクト保存ダイアログでFormat欄がはみ出す問題を回避するため、保存形式の選択欄を省略しました。初期ファイル名はUntitled.juno.jsonで、Save Asでは現在のファイル名を使用します。保存内容と拡張子は従来と同じです。
