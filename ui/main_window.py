@@ -6,6 +6,7 @@ from models.project import Project, GRIDS, PPQ
 from services.undo import History
 from services import project_io, patch_names
 from services.output_mode import switch_destination
+from services.track_state import audible_tracks
 from services.meter import MeterMap, set_at_bar, remove_at_bar
 from midi import smf
 from midi.player import Player
@@ -18,21 +19,34 @@ from ui.track_colors import track_color
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('JUNO Sketch • v0.1.4')
+        self.title('JUNO Sketch • v0.1.5')
         self.geometry('1240x820')
         self.minsize(940,620)
         self.project=Project();self.history=History();self.player=Player()
         self.output=None;self.path=None;self.dirty=False;self.playhead=0;self.was_playing=False
-        self.audition_job=None;self.audition_note=None;self.audition_generation=0
+        self.audition_job=None;self.audition_note=None;self.audition_preview=None
         self.protocol('WM_DELETE_WINDOW',self.close)
         self.build_menu()
         self.build_toolbar()
         body=ttk.Frame(self);body.pack(fill='both',expand=True)
         left=ttk.Frame(body,width=215,padding=8);left.pack(side='left',fill='y')
         ttk.Label(left,text='MIDI TRACKS',font=('',12,'bold')).pack(anchor='w')
-        self.list=tk.Listbox(left,exportselection=False,height=16,width=25)
-        self.list.pack(fill='x',pady=8)
+        list_frame=ttk.Frame(left);list_frame.pack(fill='x',pady=8)
+        self.list=tk.Listbox(list_frame,exportselection=False,selectmode='extended',height=14,width=25)
+        self.list.pack(side='left',fill='both',expand=True)
+        track_scroll=ttk.Scrollbar(list_frame,orient='vertical',command=self.list.yview)
+        track_scroll.pack(side='right',fill='y');self.list.configure(yscrollcommand=track_scroll.set)
+        self.list.bind('<Button-1>',self.remember_track_click)
         self.list.bind('<<ListboxSelect>>',self.select_track)
+        self.selection_status=tk.StringVar()
+        ttk.Label(left,textvariable=self.selection_status).pack(anchor='w')
+        states=ttk.Frame(left);states.pack(fill='x',pady=2)
+        self.solo_var=tk.BooleanVar(value=False);self.mute_var=tk.BooleanVar(value=False)
+        self.solo_button=ttk.Checkbutton(states,text='S Solo',variable=self.solo_var,
+                                       command=lambda:self.set_play_state('solo',self.solo_var.get()))
+        self.mute_button=ttk.Checkbutton(states,text='M Mute',variable=self.mute_var,
+                                       command=lambda:self.set_play_state('muted',self.mute_var.get()))
+        self.solo_button.pack(side='left');self.mute_button.pack(side='left',padx=12)
         self.name_var=tk.StringVar()
         name_row=ttk.Frame(left);name_row.pack(fill='x',pady=3)
         ttk.Label(name_row,text='Name').pack(side='left')
@@ -50,7 +64,8 @@ class MainWindow(tk.Tk):
         self.auto_name_var=tk.BooleanVar(value=False)
         ttk.Checkbutton(left,text='音色変更時に名前を追従',variable=self.auto_name_var,
                         command=self.naming_change).pack(anchor='w')
-        ttk.Button(left,text='音色名をトラック名へ適用',command=self.apply_patch_name).pack(fill='x',pady=3)
+        self.patch_name_button=ttk.Button(left,text='音色名をトラック名へ適用',command=self.apply_patch_name)
+        self.patch_name_button.pack(fill='x',pady=3)
         for key in ('msb','lsb','program'):
             self.fields[key].trace_add('write',lambda *args:self.update_patch_label())
         ttk.Button(left,text='設定を適用・音色送信',command=self.apply_track).pack(fill='x',pady=10)
@@ -122,12 +137,32 @@ class MainWindow(tk.Tk):
         self.follow_var=tk.BooleanVar(value=True)
         ttk.Checkbutton(views,text='全体表示で再生位置に追従',variable=self.follow_var,command=self.follow_change).pack(side='left',padx=10)
         ttk.Label(views,text='All Tracks: 16トラック表示 / ダブルクリックで編集').pack(side='left',padx=8)
-    def sync_ui(self):
+    def selected_track_indices(self):
+        active=self.project.ui['selected']
+        selection=set(self.project.ui.get('track_selection',[active]))
+        return sorted(selection) if active in selection else [active]
+    def sync_ui(self,clear_notes=True):
+        selection=self.selected_track_indices()
+        self.project.ui['track_selection']=selection
+        anchor=self.list.index('anchor') if self.list.size() else self.project.ui['selected']
+        list_view=self.list.yview()[0] if self.list.size() else 0
         self.list.delete(0,'end')
-        for i,t in enumerate(self.project.tracks):self.list.insert('end',f'{i+1:02}  {t.name}  [Ch {t.channel+1}]')
+        allowed=audible_tracks(self.project.tracks)
+        for i,t in enumerate(self.project.tracks):
+            flags=('S' if t.solo else '-')+('M' if t.muted else '-')
+            self.list.insert('end',f'{i+1:02} {flags}  {t.name}  [Ch {t.channel+1}]')
         for i in range(16):
-            self.list.itemconfigure(i,foreground=track_color(i),background='#20252d',selectbackground='#434b59',selectforeground=track_color(i))
-        index=self.project.ui['selected'];self.list.selection_set(index)
+            self.list.itemconfigure(i,foreground=track_color(i) if allowed[i] else '#7c8490',background='#20252d',selectbackground='#434b59',selectforeground=track_color(i))
+        index=self.project.ui['selected']
+        for selected in selection:self.list.selection_set(selected)
+        self.list.activate(index);self.list.selection_anchor(anchor)
+        self.list.yview_moveto(list_view);self.list.see(index)
+        self.selection_status.set(f'選択 {len(selection)} / 編集 {index+1:02}')
+        self.patch_name_button.configure(text=f'音色名を適用（選択 {len(selection)}）')
+        for attr,var,button in [('solo',self.solo_var,self.solo_button),('muted',self.mute_var,self.mute_button)]:
+            values=[getattr(self.project.tracks[i],attr) for i in selection]
+            var.set(all(values))
+            button.state(['alternate'] if any(values) and not all(values) else ['!alternate'])
         first=MeterMap(self.project.signatures).segments[0]
         self.meter_button.configure(text=f'拍子 {first.numerator}/{first.denominator}…')
         self.name_var.set(self.track.name)
@@ -142,7 +177,9 @@ class MainWindow(tk.Tk):
         self.view_var.set(self.project.ui.get('view','Piano Roll'))
         self.ghost_var.set(self.project.ui.get('show_ghosts',True))
         self.follow_var.set(self.project.ui.get('follow_playhead',True))
-        self.roll.selected.clear();self.roll.drag=None;self.roll.vel_drag=False
+        self.roll.sync_zoom()
+        if clear_notes:self.roll.selected.clear()
+        self.roll.drag=None;self.roll.vel_drag=False
         self.show_view()
         self.roll.redraw();self.overview.redraw()
         self.draw_cursors(self.player.cursor() if self.player.playing else self.playhead)
@@ -171,10 +208,33 @@ class MainWindow(tk.Tk):
     def draw_cursors(self,tick):
         self.roll.cursor(tick)
         self.overview.cursor(tick,follow=self.player.playing and self.project.ui.get('view')=='All Tracks' and self.project.ui.get('follow_playhead',True))
+    def remember_track_click(self,event):
+        self._track_click_index=self.list.nearest(event.y)
     def select_track(self,e):
-        if self.list.curselection():
-            self.project.ui['selected']=self.list.curselection()[0]
-            self.sync_ui()
+        selection=list(self.list.curselection())
+        if not selection:return
+        clicked=getattr(self,'_track_click_index',None)
+        self._track_click_index=None
+        active=clicked if clicked in selection else self.list.index('active')
+        if active not in selection:active=selection[-1]
+        if selection==self.project.ui.get('track_selection') and active==self.project.ui['selected']:
+            return
+        changed_active=active!=self.project.ui['selected']
+        if changed_active:self.end_audition()
+        self.project.ui['selected']=active
+        self.project.ui['track_selection']=selection
+        self.sync_ui(clear_notes=changed_active)
+    def set_play_state(self,attr,value):
+        def action():
+            if attr not in ('muted','solo'):raise ValueError('不正な再生状態です')
+            indices=self.selected_track_indices()
+            if all(getattr(self.project.tracks[i],attr)==value for i in indices):return
+            self.checkpoint()
+            for i in indices:setattr(self.project.tracks[i],attr,bool(value))
+            self.player.set_track_states(self.project.tracks)
+            if not audible_tracks(self.project.tracks)[self.project.ui['selected']]:self.end_audition()
+            self.changed();self.sync_ui(clear_notes=False)
+        self.guarded(action)
     def checkpoint(self): self.history.push(self.project)
     def changed(self):
         self.dirty=True
@@ -202,6 +262,18 @@ class MainWindow(tk.Tk):
         self.changed()
     def apply_patch_name(self):
         def action():
+            indices=self.selected_track_indices()
+            if len(indices)>1:
+                known=[i for i in indices if patch_names.lookup(self.project.tracks[i].msb,
+                        self.project.tracks[i].lsb,self.project.tracks[i].program)]
+                if not known:
+                    self.status.set('選択トラックに登録済み音色がありません。名前は変更しません。')
+                    return
+                self.checkpoint()
+                for i in known:patch_names.apply_name(self.project.tracks[i])
+                self.changed();self.sync_ui(clear_notes=False)
+                self.status.set(f'{len(known)}トラックに音色名を適用（未登録 {len(indices)-len(known)}、MIDI送信なし）')
+                return
             vals=self.track_values()
             patch=patch_names.lookup(vals['msb'],vals['lsb'],vals['program'])
             if patch is None:
@@ -320,17 +392,25 @@ class MainWindow(tk.Tk):
     def end_audition(self):
         if self.audition_job:
             self.after_cancel(self.audition_job);self.audition_job=None
+        if self.audition_preview is not None:
+            self.player.end_preview(self.audition_preview);self.audition_preview=None
         if self.audition_note and self.output:
             ch,pitch=self.audition_note
             self.audition_note=None
             self.output.send(mido.Message('note_off',channel=ch,note=pitch))
-    def audition(self,pitch,velocity):
-        if self.player.playing:return
+    def audition(self,pitch,velocity,hold=False):
+        if not audible_tracks(self.project.tracks)[self.project.ui['selected']]:return
         try:
-            self.end_audition();out=self.ensure_output();out.setup(self.track)
-            out.send(mido.Message('note_on',channel=self.track.channel,note=pitch,velocity=velocity))
-            self.audition_note=(self.track.channel,pitch)
-            self.audition_job=self.after(170,lambda:self.guarded(self.end_audition))
+            self.end_audition()
+            if self.player.playing:
+                token=self.player.begin_preview(self.project.ui['selected'],pitch,velocity)
+                if token is None:return
+                self.audition_preview=token
+            else:
+                out=self.ensure_output();out.setup(self.track)
+                out.send(mido.Message('note_on',channel=self.track.channel,note=pitch,velocity=velocity))
+                self.audition_note=(self.track.channel,pitch)
+            if not hold:self.audition_job=self.after(170,lambda:self.guarded(self.end_audition))
         except Exception as exc:
             self.status.set(str(exc))
     def release_output(self):
@@ -385,6 +465,7 @@ class MainWindow(tk.Tk):
     def replace(self,p,path=None):
         self.stop();self.release_output();self.project=p;self.path=path;self.history=History();self.playhead=0;self.dirty=False
         self.title(f'JUNO Sketch • {path.name if path else "Untitled"}')
+        self.roll.preview_pitch=None;self.roll.key_held=False
         self.sync_ui()
         self.restore_view()
     def new(self):

@@ -24,6 +24,8 @@ class Track:
     notes: list[Note] = field(default_factory=list)
     events: list = field(default_factory=list)
     auto_name: bool = False
+    muted: bool = False
+    solo: bool = False
     output_banks: dict = field(default_factory=dict)
 
 @dataclass
@@ -32,7 +34,7 @@ class Project:
     tracks: list[Track] = field(default_factory=lambda: [Track(f'Track {i+1:02}', i, msb=120 if i==9 else 121) for i in range(16)])
     tempos: list = field(default_factory=list)
     signatures: list = field(default_factory=lambda: [[0, 4, 4]])
-    ui: dict = field(default_factory=lambda: dict(grid='1/16', mode='Grid', selected=0, output='Internal Preview', port='', bars=8, show_ghosts=True, view='Piano Roll', follow_playhead=True))
+    ui: dict = field(default_factory=lambda: dict(grid='1/16', mode='Grid', selected=0, output='Internal Preview', port='', bars=8, show_ghosts=True, view='Piano Roll', follow_playhead=True, track_selection=[0], zoom_x=1.0, zoom_y=1.0, wheel_horizontal=False))
 
     def data(self):
         return asdict(self)
@@ -50,7 +52,7 @@ class Project:
             track = Track(**t)
             if not (0 <= track.channel <= 15 and all(0 <= x <= 127 for x in (track.msb, track.lsb, track.program)) and 1 <= track.velocity <= 127):
                 raise ValueError('不正なトラック設定です')
-            if not isinstance(track.auto_name, bool):
+            if any(not isinstance(v, bool) for v in (track.auto_name, track.muted, track.solo)):
                 raise ValueError('不正な音色名追従設定です')
             if not isinstance(track.output_banks, dict):
                 raise ValueError('不正な出力別バンク設定です')
@@ -69,6 +71,18 @@ class Project:
                 or not isinstance(p.ui['show_ghosts'], bool)
                 or not isinstance(p.ui['follow_playhead'], bool)):
             raise ValueError('不正な表示設定です')
+        if 'track_selection' not in data.get('ui', {}):
+            p.ui['track_selection'] = [p.ui['selected']]
+        selection = p.ui['track_selection']
+        if (not isinstance(selection,list) or not selection
+                or any(not isinstance(i,int) or isinstance(i,bool) or not 0<=i<16 for i in selection)):
+            raise ValueError('不正なトラック選択です')
+        for key, low, high in (('zoom_x',0.25,4.0),('zoom_y',0.5,2.5)):
+            value = p.ui[key]
+            if not isinstance(value,(int,float)) or not low<=value<=high:
+                raise ValueError('不正なズーム倍率です')
+        if not isinstance(p.ui['wheel_horizontal'],bool):
+            raise ValueError('不正なスクロール設定です')
         p.tempos = data.get('tempos', [])
         p.signatures = data.get('signatures', [[0,4,4]])
         from services.meter import MeterMap

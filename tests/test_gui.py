@@ -181,3 +181,104 @@ def test_meter_edit_updates_both_views_without_moving_notes():
         for d in dialogs:d.destroy()
     finally:
         app.stop();app.release_output();app.destroy()
+
+
+def test_real_shift_track_selection_bulk_names_and_states():
+    from ui.main_window import MainWindow
+    from test_core import Capture
+    app=MainWindow()
+    try:
+        out=Capture();app.output=out
+        app.update()
+        for index in (1,4):
+            _,y,_,height=app.list.bbox(index)
+            state=1 if index==4 else 0
+            app.list.event_generate('<ButtonPress-1>',x=10,y=y+height//2,state=state)
+            app.list.event_generate('<ButtonRelease-1>',x=10,y=y+height//2,state=state)
+            app.update()
+        assert app.list.curselection()==(1,2,3,4)
+        assert app.selected_track_indices()==[1,2,3,4]
+        assert app.project.ui['selected']==4
+        for i in (1,2,3,4):app.project.tracks[i].name=f'Custom {i}'
+        app.project.tracks[2].program=24
+        app.project.tracks[3].msb=0
+        app.project.tracks[4].program=40
+        app.sync_ui()
+        before=[(t.channel,t.msb,t.lsb,t.program) for t in app.project.tracks]
+        count=len(app.history.past)
+        app.patch_name_button.invoke()
+        assert [app.project.tracks[i].name for i in (1,2,3,4)]==['Piano 1','Nylon-str.Gt','Custom 3','Violin']
+        assert len(app.history.past)==count+1
+        assert before==[(t.channel,t.msb,t.lsb,t.program) for t in app.project.tracks]
+        assert not out.messages
+        app.undo()
+        assert [app.project.tracks[i].name for i in (1,2,3,4)]==[f'Custom {i}' for i in (1,2,3,4)]
+        app.solo_button.invoke()
+        assert all(app.project.tracks[i].solo for i in (1,2,3,4))
+        app.mute_button.invoke()
+        assert all(app.project.tracks[i].muted for i in (1,2,3,4))
+        app.mute_button.invoke()
+        assert not any(app.project.tracks[i].muted for i in (1,2,3,4))
+        assert app.list.curselection()==(1,2,3,4)
+    finally:
+        app.stop();app.release_output();app.destroy()
+
+
+def test_keyboard_and_note_click_preview_with_real_output_capture():
+    from ui.main_window import MainWindow
+    from models.project import Note
+    from test_core import Capture
+    app=MainWindow()
+    try:
+        out=Capture();app.output=out;app.update()
+        r=app.roll
+        y=r.TOP+(127-60)*r.ROW-r.canvas.canvasy(0)+r.ROW//2
+        r.key_down(NS(y=y));app.update()
+        assert app.audition_note==(0,60)
+        assert r.preview_pitch==60
+        assert not app.track.notes
+        r.key_motion(NS(y=y-r.ROW))
+        assert app.audition_note==(0,61)
+        r.key_up()
+        assert app.audition_note is None
+        assert [(m.type,m.note) for m in out.messages if m.type in ('note_on','note_off')]==[
+            ('note_on',60),('note_off',60),('note_on',61),('note_off',61)]
+        app.track.notes=[Note(240,60,240,78)];r.redraw()
+        r.down(NS(x=r.KEY+240*r.SCALE+4,y=y,state=0));r.up(NS())
+        assert app.audition_note==(0,60)
+        assert out.messages[-1].type=='note_on' and out.messages[-1].velocity==78
+        app.end_audition()
+        assert out.messages[-1].type=='note_off'
+    finally:
+        app.stop();app.release_output();app.destroy()
+
+
+def test_zoom_anchor_scroll_synchronization_and_saved_ui(tmp_path):
+    from ui.main_window import MainWindow
+    from services.project_io import load
+    app=MainWindow()
+    try:
+        app.update();r=app.roll
+        r.canvas.xview_moveto(.2);r.canvas.yview_moveto(.4);app.update()
+        sx=r.KEY+(r.canvas.winfo_width()-r.KEY)/2;sy=r.canvas.winfo_height()/2
+        tick=(r.canvas.canvasx(sx)-r.KEY)/r.SCALE
+        pitch_row=(r.canvas.canvasy(sy)-r.TOP)/r.ROW
+        r.zoom(horizontal=1.25,vertical=1.25);app.update()
+        assert (r.canvas.canvasx(sx)-r.KEY)/r.SCALE==pytest.approx(tick,abs=15)
+        assert (r.canvas.canvasy(sy)-r.TOP)/r.ROW==pytest.approx(pitch_row,abs=.1)
+        assert r.ROW==20 and r.SCALE==pytest.approx(.125)
+        left=r.canvas.canvasx(0)
+        r.keys.event_generate('<Shift-MouseWheel>',delta=-3);app.update()
+        assert r.canvas.canvasx(0)>left
+        assert r.velocity.xview()[0]==pytest.approx(r.canvas.xview()[0],abs=.001)
+        left=r.canvas.canvasx(0)
+        r.horizontal_wheel.set(True);r.wheel_mode_changed()
+        r.wheel(NS(delta=-3,state=0,num=None));app.update()
+        assert r.canvas.canvasx(0)>left
+        app.path=tmp_path/'zoom.juno.json';app.save()
+        q=load(app.path)
+        assert q.ui['zoom_x']==1.25 and q.ui['zoom_y']==1.25 and q.ui['wheel_horizontal']
+        r.zoom(reset=True)
+        assert r.ROW==16 and r.SCALE==pytest.approx(.1)
+    finally:
+        app.stop();app.release_output();app.destroy()

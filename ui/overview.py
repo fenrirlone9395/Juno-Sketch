@@ -2,6 +2,7 @@
 import tkinter as tk
 from models.project import PPQ
 from services.meter import MeterMap
+from services.track_state import audible_tracks
 from ui.track_colors import track_color, project_end
 
 
@@ -63,6 +64,7 @@ class TrackOverview(tk.Frame):
         height = max(1, c.winfo_height())
         c.configure(scrollregion=(0, 0, width, height))
         lane = self.lane_height()
+        allowed=audible_tracks(project.tracks)
         for i, track in enumerate(project.tracks):
             y = i*lane
             active = i == project.ui['selected']
@@ -70,8 +72,8 @@ class TrackOverview(tk.Frame):
             c.create_rectangle(0, y, width, y+lane, fill=bg, outline='#434b59', tags=('lane',))
             self.labels.create_rectangle(0, y, self.LABEL, y+lane, fill=bg, outline='#434b59')
             self.labels.create_rectangle(3, y+3, 7, y+lane-3, fill=track_color(i), outline='')
-            self.labels.create_text(13, y+lane/2, text=f'{i+1:02}  {track.name}  [Ch {track.channel+1}]',
-                                    anchor='w', fill=track_color(i), width=self.LABEL-18)
+            self.labels.create_text(13, y+lane/2, text=f"{i+1:02} {'S' if track.solo else '-'}{'M' if track.muted else '-'}  {track.name}",
+                                    anchor='w', fill=track_color(i) if allowed[i] else '#7c8490', width=self.LABEL-18)
         for tick,bar,beat,n,d in meter.beats(0,end_tick):
             x = self.LABEL + tick*self.SCALE
             c.create_line(x, 0, x, height, fill='#525d6d' if beat==1 else '#303946',tags='meter_line')
@@ -82,7 +84,7 @@ class TrackOverview(tk.Frame):
                 x = self.LABEL + note.start*self.SCALE
                 y = i*lane+4+(high-note.pitch)/(high-low)*max(1, lane-10)
                 c.create_rectangle(x, y, max(x+2, x+note.duration*self.SCALE), y+3,
-                                   fill=track_color(i), outline='', tags=('overview_note', f'track_{i}'))
+                                   fill=track_color(i) if allowed[i] else '#535d6a', outline='', tags=('overview_note', f'track_{i}'))
         self.draw_ruler()
         self.cursor(self.position)
 
@@ -103,6 +105,7 @@ class TrackOverview(tk.Frame):
         self.canvas.focus_set()
         index = min(15, max(0, int(event.y/self.lane_height())))
         self.app.project.ui['selected'] = index
+        self.app.project.ui['track_selection'] = [index]
         self.app.sync_ui()
 
     def edit(self, event):
