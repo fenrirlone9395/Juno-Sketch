@@ -46,7 +46,9 @@ def test_native_preview_receives_base_bank_messages():
     p=Project()
     output.setup(p.tracks[0]);output.setup(p.tracks[9])
     assert received[:3]==[(0xB0,0,121),(0xB0,32,0),(0xC0,0,0)]
-    assert received[3:]==[(0xB9,0,120),(0xB9,32,0),(0xC9,0,0)]
+    assert received[3:5]==[(0xB0,7,100),(0xB0,10,64)]
+    assert received[5:8]==[(0xB9,0,120),(0xB9,32,0),(0xC9,0,0)]
+    assert received[8:]==[(0xB9,7,100),(0xB9,10,64)]
     output.send(mido.Message('control_change',channel=0,control=0,value=87))
     output.send(mido.Message('control_change',channel=0,control=32,value=73))
     assert received[-2:]==[(0xB0,0,121),(0xB0,32,0)]

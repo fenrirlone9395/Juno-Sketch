@@ -31,8 +31,7 @@ class PianoRoll(tk.Frame):
         self.y_zoom_label=ttk.Label(toolbar,width=5);self.y_zoom_label.pack(side='left',padx=3)
         ttk.Button(toolbar,text='100%',width=5,command=lambda:self.zoom(reset=True)).pack(side='left',padx=5)
         self.horizontal_wheel=tk.BooleanVar(value=False)
-        ttk.Checkbutton(toolbar,text='ホイール横',variable=self.horizontal_wheel,
-                        command=self.wheel_mode_changed).pack(side='left',padx=8)
+        ttk.Label(toolbar,text='Ctrl: 横 / Option: ズーム').pack(side='left',padx=8)
         self.canvas=tk.Canvas(self,bg='#20252d',highlightthickness=0,xscrollincrement=1,yscrollincrement=1)
         self.velocity=tk.Canvas(self,bg='#191e26',height=110,highlightthickness=0)
         self.ruler=tk.Canvas(self,bg='#20252d',height=28,highlightthickness=0)
@@ -57,16 +56,20 @@ class PianoRoll(tk.Frame):
         for seq,func in [('<Button-1>',self.down),('<B1-Motion>',self.motion),('<ButtonRelease-1>',self.up),('<Double-Button-1>',self.double),('<Button-2>',self.context),('<Button-3>',self.context)]:
             self.canvas.bind(seq,func)
         for widget in (self.canvas,self.keys,self.ruler,self.velocity,self.hbar):
-            horizontal=widget in (self.ruler,self.velocity,self.hbar)
+            horizontal=widget==self.hbar
             widget.bind('<MouseWheel>',lambda e,h=horizontal:self.wheel(e,horizontal=h))
             # Aqua sends native horizontal trackpad gestures as Shift-MouseWheel.
             widget.bind('<Shift-MouseWheel>',lambda e:self.wheel(e,horizontal=True))
-            widget.bind('<Control-MouseWheel>',lambda e:self.wheel_zoom(e,vertical=False))
-            widget.bind('<Control-Shift-MouseWheel>',lambda e:self.wheel_zoom(e,vertical=True))
+            widget.bind('<Control-MouseWheel>',lambda e:self.wheel(e,horizontal=True))
+            widget.bind('<Control-Shift-MouseWheel>',lambda e:self.wheel(e,horizontal=True))
+            widget.bind('<Alt-MouseWheel>',lambda e:self.wheel_zoom(e,vertical=False))
+            widget.bind('<Alt-Shift-MouseWheel>',lambda e:self.wheel_zoom(e,vertical=True))
             widget.bind('<Button-4>',lambda e,h=horizontal:self.wheel(e,horizontal=h))
             widget.bind('<Button-5>',lambda e,h=horizontal:self.wheel(e,horizontal=h))
             widget.bind('<Shift-Button-4>',lambda e:self.wheel(e,horizontal=True))
             widget.bind('<Shift-Button-5>',lambda e:self.wheel(e,horizontal=True))
+            widget.bind('<Control-Button-4>',lambda e:self.wheel(e,horizontal=True))
+            widget.bind('<Control-Button-5>',lambda e:self.wheel(e,horizontal=True))
         self.velocity.bind('<Button-1>',self.vel_down)
         self.velocity.bind('<B1-Motion>',self.vel_motion)
         self.velocity.bind('<ButtonRelease-1>',self.vel_up)
@@ -168,7 +171,7 @@ class PianoRoll(tk.Frame):
         delta=getattr(event,'delta',0)
         return delta/120 if self.tk.call('tk','windowingsystem')=='win32' else delta
     def wheel(self,e,horizontal=False):
-        horizontal=horizontal or bool(getattr(e,'state',0)&1) or self.horizontal_wheel.get()
+        horizontal=horizontal or bool(getattr(e,'state',0)&5)
         axis='x' if horizontal else 'y'
         self._wheel_remainder[axis]+=max(-200,min(200,-self.wheel_delta(e)*12))
         pixels=int(self._wheel_remainder[axis])

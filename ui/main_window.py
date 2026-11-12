@@ -15,11 +15,13 @@ from midi.juno_ds import JunoDsOutput
 from ui.piano_roll import PianoRoll
 from ui.overview import TrackOverview
 from ui.track_colors import track_color
+from ui.event_editors import CcEditor, SysexEditor
+from services.controllers import put_cc
 
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('JUNO Sketch • v0.1.9')
+        self.title('JUNO Sketch • v0.2.0')
         self.geometry('1240x820')
         self.minsize(940,620)
         self.project=Project();self.history=History();self.player=Player()
@@ -32,7 +34,7 @@ class MainWindow(tk.Tk):
         left=ttk.Frame(body,width=215,padding=8);left.pack(side='left',fill='y')
         ttk.Label(left,text='MIDI TRACKS',font=('',12,'bold')).pack(anchor='w')
         list_frame=ttk.Frame(left);list_frame.pack(fill='x',pady=8)
-        self.list=tk.Listbox(list_frame,exportselection=False,selectmode='extended',height=14,width=25)
+        self.list=tk.Listbox(list_frame,exportselection=False,selectmode='extended',height=12,width=25)
         self.list.pack(side='left',fill='both',expand=True)
         track_scroll=ttk.Scrollbar(list_frame,orient='vertical',command=self.list.yview)
         track_scroll.pack(side='right',fill='y');self.list.configure(yscrollcommand=track_scroll.set)
@@ -104,6 +106,8 @@ class MainWindow(tk.Tk):
         edit=tk.Menu(bar,tearoff=False);bar.add_cascade(label='Edit',menu=edit)
         edit.add_command(label='Undo',command=self.undo);edit.add_command(label='Redo',command=self.redo)
         edit.add_command(label='Select All Notes',command=self.select_all)
+        edit.add_command(label='CC Editor…',command=self.cc_editor)
+        edit.add_command(label='SysEx Editor…',command=self.sysex_editor)
         helpmenu=tk.Menu(bar,tearoff=False);bar.add_cascade(label='Help',menu=helpmenu)
         helpmenu.add_command(label='操作方法',command=lambda:messagebox.showinfo('JUNO Sketch','Piano Roll: 空白をダブルクリックして作成。\nDrum Editor: 空白をクリック、楽器名を押して試聴。\nShift＋空白ドラッグで範囲選択。\nGrid / Slip と三連符は上部で切替。\nMIDI Channelは1–16、Programは1–128で表示。\n内部音源はGMの近似音色です。JUNOの音色とは異なります。\nJUNOはPerformanceの16パートで受信する設定にしてください。'))
     def build_toolbar(self):
@@ -139,6 +143,15 @@ class MainWindow(tk.Tk):
         ttk.Checkbutton(views,text='再生位置に追従',variable=self.follow_var,command=self.follow_change).pack(side='left',padx=10)
         self.view_hint=ttk.Label(views,text='All Tracks: ダブルクリックで編集')
         self.view_hint.pack(side='left',padx=8)
+        tools=ttk.Frame(self,padding=(8,0,8,4));tools.pack(fill='x')
+        ttk.Button(tools,text='CC Editor',command=self.cc_editor).pack(side='left')
+        ttk.Button(tools,text='SysEx Editor',command=self.sysex_editor).pack(side='left',padx=6)
+        ttk.Label(tools,text='Internal Master').pack(side='left',padx=(12,4))
+        self.master_var=tk.DoubleVar(value=.8)
+        self.master_scale=ttk.Scale(tools,from_=0,to=1,variable=self.master_var,
+                                    length=150,command=self.master_change)
+        self.master_scale.pack(side='left')
+        self.master_label=ttk.Label(tools,width=5);self.master_label.pack(side='left',padx=5)
     def selected_track_indices(self):
         active=self.project.ui['selected']
         selection=set(self.project.ui.get('track_selection',[active]))
@@ -185,6 +198,10 @@ class MainWindow(tk.Tk):
         self.view_var.set(self.project.ui.get('view','Piano Roll'))
         self.ghost_var.set(self.project.ui.get('show_ghosts',True))
         self.follow_var.set(self.project.ui.get('follow_playhead',True))
+        self.master_var.set(self.project.ui.get('master_volume',.8))
+        self.master_label.configure(text=f'{self.master_var.get():.0%}')
+        self.master_scale.state(['!disabled'] if self.project.ui['output']=='Internal Preview' else ['disabled'])
+        self.overview.sync_mixer()
         layout_changed=self.roll.KEY!=(210 if self.project.ui.get('view')=='Drum Editor' else 62)
         if clear_notes:self.roll.selected.clear()
         self.roll.drag=None;self.roll.vel_drag=False
@@ -196,7 +213,7 @@ class MainWindow(tk.Tk):
     def show_view(self):
         overview=self.project.ui.get('view','Piano Roll')=='All Tracks'
         drum=self.project.ui.get('view')=='Drum Editor'
-        self.view_hint.configure(text='GM参考名 / ドラム音色を設定してください' if drum else 'All Tracks: ダブルクリックで編集')
+        self.view_hint.configure(text='GM参考名 / ドラム音色を設定してください' if drum else 'All Tracks: ダブルクリックで編集' if overview else '')
         gesture='クリック：作成 / 楽器名：試聴' if drum else 'ダブルクリック：作成 / 右端：長さ'
         self.editor_help.set(gesture+'\nShiftクリック／囲む：複数選択\n詳しい操作はHelpメニュー')
         if overview:
@@ -408,9 +425,30 @@ class MainWindow(tk.Tk):
             label='GM基本バンク' if destination=='Internal Preview' else 'JUNOバンク'
             self.status.set(f'{label}を適用・送信しました' if switched else 'MIDIポートを変更しました')
         self.guarded(action)
+    def cc_editor(self):
+        self.stop();self.end_audition();CcEditor(self)
+    def sysex_editor(self):
+        self.stop();self.end_audition();SysexEditor(self)
+    def set_mixer_cc(self,index,control,value):
+        def action():
+            put_cc(self.project.tracks[index],0,control,value);self.changed()
+            if not self.player.live_cc(index,control,value,self.project.tracks) and self.output:
+                track=self.project.tracks[index]
+                self.output.send(mido.Message('control_change',channel=track.channel,control=control,value=value))
+        self.guarded(action)
+    def master_change(self,value):
+        if self.project.ui['output']!='Internal Preview':return
+        value=float(value)
+        if value==self.project.ui.get('master_volume',.8):return
+        self.project.ui['master_volume']=value;self.changed()
+        self.master_label.configure(text=f'{value:.0%}')
+        if self.output and hasattr(self.output,'set_master_volume'):
+            self.guarded(lambda:self.output.set_master_volume(value))
     def ensure_output(self):
         if self.output is None:
             self.output=InternalPreviewOutput() if self.project.ui['output']=='Internal Preview' else JunoDsOutput(self.project.ui.get('port',''))
+            if hasattr(self.output,'set_master_volume'):
+                self.output.set_master_volume(self.project.ui.get('master_volume',.8))
         return self.output
     def end_audition(self):
         if self.audition_job:

@@ -132,9 +132,9 @@ def test_destination_switch_sends_all_tracks_and_port_changes_preserve_banks(mon
         assert (app.track.msb,app.track.lsb)==(87,64)
         assert not outputs  # No implicit/default USB port selection.
         app.port.set('JUNO USB');app.output_change()
-        assert len(outputs[-1].messages)==48
+        assert len(outputs[-1].messages)==80
         assert outputs[-1].messages[0].value==87
-        assert outputs[-1].messages[9*3].value==86
+        assert outputs[-1].messages[9*5].value==86
         app.track.msb,app.track.lsb=87,73
         app.port.set('JUNO USB 2');app.output_change()
         assert app.track.lsb==73
@@ -142,7 +142,7 @@ def test_destination_switch_sends_all_tracks_and_port_changes_preserve_banks(mon
         assert (app.track.msb,app.track.lsb)==(121,0)
         assert app.track.name=='Piano 1'
         assert outputs[-1].messages[0].value==121
-        assert outputs[-1].messages[9*3].value==120
+        assert outputs[-1].messages[9*5].value==120
         assert app.fields['msb'].get()=='121'
         assert 'GM:' in app.patch_label.get()
         app.undo()
@@ -273,7 +273,7 @@ def test_zoom_anchor_scroll_synchronization_and_saved_ui(tmp_path):
         assert r.velocity.xview()[0]==pytest.approx(r.canvas.xview()[0],abs=.001)
         left=r.canvas.canvasx(0)
         r.horizontal_wheel.set(True);r.wheel_mode_changed()
-        r.wheel(NS(delta=-3,state=0,num=None));app.update()
+        r.wheel(NS(delta=-3,state=4,num=None));app.update()
         assert r.canvas.canvasx(0)>left
         app.path=tmp_path/'zoom.juno.json';app.save()
         q=load(app.path)
@@ -505,5 +505,98 @@ def test_project_save_dialog_omits_overflowing_format_popup(tmp_path,monkeypatch
         app.path=tmp_path/'My Song.juno.json'
         assert app.save(True)
         assert options[-1]['initialfile']=='My Song.juno.json'
+    finally:
+        app.stop();app.release_output();app.destroy()
+
+
+def test_resumed_editor_scroll_and_hint_modes():
+    from ui.main_window import MainWindow
+    from models.project import Note
+    app=MainWindow()
+    try:
+        app.track.notes=[Note(80000,60,240)];app.sync_ui();app.update()
+        for mode in ('Drum Editor','All Tracks','Piano Roll'):
+            app.view_var.set(mode);app.view_change();app.update()
+            assert bool(app.view_hint.cget('text'))==(mode!='Piano Roll')
+            if mode!='All Tracks':
+                r=app.roll;r.canvas.yview_moveto(.3);r.xview('moveto',.1);app.update()
+                x0=r.canvas.canvasx(0);y0=r.canvas.canvasy(0);scale=r.SCALE
+                r.canvas.event_generate('<MouseWheel>',delta=-3);app.update()
+                assert r.canvas.canvasy(0)>y0 and r.canvas.canvasx(0)==x0
+                y0=r.canvas.canvasy(0)
+                r.canvas.event_generate('<Control-MouseWheel>',delta=-3);app.update()
+                assert r.canvas.canvasx(0)>x0 and r.canvas.canvasy(0)==y0 and r.SCALE==scale
+                r.canvas.event_generate('<Alt-MouseWheel>',delta=3);app.update()
+                assert r.SCALE>scale
+            else:
+                app.geometry('940x620');app.update()
+                o=app.overview;o.canvas.xview_moveto(0);o.canvas.yview_moveto(0);app.update()
+                o.canvas.event_generate('<Control-MouseWheel>',delta=-3);app.update()
+                assert o.canvas.canvasx(0)>0
+                o.labels.event_generate('<MouseWheel>',delta=-3);app.update()
+                assert o.canvas.canvasy(0)>0
+    finally:
+        app.stop();app.release_output();app.destroy()
+
+
+def test_cc_editor_template_update_and_project_undo():
+    from ui.main_window import MainWindow
+    from ui.event_editors import CcEditor
+    from services.controllers import cc_value,cc_events
+    app=MainWindow()
+    try:
+        app.change_meter(1,3,4);app.update()
+        d=CcEditor(app);app.update()
+        assert d.end.get()=='2880'
+        d.tick.set('160');d.end.set('640');d.pedal()
+        assert [(t,v) for _,t,v in cc_events(app.track,64)]==[(160,127),(640,0)]
+        d.control.set('7 Volume');d.tick.set('0');d.value.set('85');d.put();d.refresh()
+        assert cc_value(app.track,7)==85
+        row=d.table.get_children()[0];d.table.selection_set(row);d.select()
+        d.value.set('73');d.update_event()
+        assert cc_value(app.track,7)==73
+        d.close();app.undo();assert cc_value(app.track,7)==85
+        app.redo();assert cc_value(app.track,7)==73
+    finally:
+        app.stop();app.release_output();app.destroy()
+
+
+def test_mixer_and_master_preserve_preview_and_usb_boundaries():
+    from ui.main_window import MainWindow
+    from test_core import Capture
+    from services.controllers import cc_value
+    app=MainWindow()
+    try:
+        out=Capture();out.gain=[];out.set_master_volume=lambda value:out.gain.append(value)
+        app.output=out;app.update();m=app.overview.mixer
+        m.begin();m.change(0,7,'68');m.change(0,7,'69');m.end()
+        assert cc_value(app.track,7)==69 and out.messages[-1].value==69
+        app.undo();assert cc_value(app.track,7)==100
+        app.redo();assert cc_value(app.track,7)==69
+        app.output=out
+        app.master_change('.3');assert out.gain==[.3]
+        app.project.ui['output']='JUNO-DS';app.sync_ui();app.update()
+        assert app.master_scale.instate(['disabled'])
+        app.master_change('.9');assert out.gain==[.3]
+        assert app.project.ui['master_volume']==.3
+    finally:
+        app.stop();app.release_output();app.destroy()
+
+
+def test_sysex_editor_validation_send_and_save(tmp_path):
+    from ui.main_window import MainWindow
+    from ui.event_editors import SysexEditor
+    from test_core import Capture
+    app=MainWindow()
+    try:
+        d=SysexEditor(app);app.update()
+        assert d.send_button.instate(['disabled'])
+        d.hex.insert('1.0','F0 41 10 00 F7');d.tick.set('960');d.label.set('Test');d.add()
+        assert app.project.sysex==[dict(tick=960,data=[65,16,0],label='Test')]
+        d.destroy();app.project.ui['output']='JUNO-DS';app.output=Capture()
+        d=SysexEditor(app);app.update();d.table.selection_set('0');d.select()
+        d.send();assert app.output.messages[-1].type=='sysex'
+        d.tick.set('1920');d.update_event();assert app.project.sysex[0]['tick']==1920
+        d.destroy();app.undo();assert app.project.sysex[0]['tick']==960
     finally:
         app.stop();app.release_output();app.destroy()

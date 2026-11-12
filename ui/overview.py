@@ -3,6 +3,7 @@ import tkinter as tk
 from models.project import PPQ
 from services.meter import MeterMap
 from services.track_state import audible_tracks
+from ui.mixer import MidiMixer
 from ui.track_colors import track_color, project_end
 
 
@@ -15,7 +16,7 @@ class TrackOverview(tk.Frame):
         self.app = app
         self.position = 0
         self.ruler = tk.Canvas(self, height=28, bg='#20252d', highlightthickness=0)
-        self.canvas = tk.Canvas(self, bg='#20252d', highlightthickness=0)
+        self.canvas = tk.Canvas(self, bg='#20252d', highlightthickness=0,xscrollincrement=1,yscrollincrement=1)
         self.labels = tk.Canvas(self.canvas, width=self.LABEL, bg='#20252d', highlightthickness=0)
         self.labels.place(x=0, y=0, width=self.LABEL, relheight=1)
         self.scrollbar = tk.Scrollbar(self, orient='horizontal', command=self.canvas.xview)
@@ -23,6 +24,10 @@ class TrackOverview(tk.Frame):
         self.ruler.grid(row=0, column=0, sticky='ew')
         self.canvas.grid(row=1, column=0, sticky='nsew')
         self.scrollbar.grid(row=2, column=0, sticky='ew')
+        self.vbar=tk.Scrollbar(self,orient='vertical',command=self.canvas.yview)
+        self.vbar.grid(row=1,column=1,sticky='ns')
+        self.canvas.configure(yscrollcommand=self.yscrolled)
+        self.mixer=MidiMixer(self,app);self.mixer.grid(row=3,column=0,columnspan=2,sticky='ew')
         self.rowconfigure(1, weight=1)
         self.columnconfigure(0, weight=1)
         self.canvas.bind('<Configure>', lambda e: self.redraw())
@@ -30,17 +35,36 @@ class TrackOverview(tk.Frame):
         self.canvas.bind('<Double-Button-1>', self.edit)
         self.labels.bind('<Button-1>', self.select)
         self.labels.bind('<Double-Button-1>', self.edit)
-        self.canvas.bind('<MouseWheel>', self.wheel)
+        for widget in (self.canvas,self.labels,self.ruler):
+            for seq in ('<MouseWheel>','<Shift-MouseWheel>','<Control-MouseWheel>','<Button-4>','<Button-5>','<Control-Button-4>','<Control-Button-5>'):
+                widget.bind(seq,self.wheel)
         self.ruler.bind('<Button-1>', self.seek)
 
     def lane_height(self):
-        return max(1, self.canvas.winfo_height()) / 16
+        return max(24, self.canvas.winfo_height()/16)
+
+    def sync_mixer(self):self.mixer.sync()
+
+    def yscrolled(self,first,last):
+        self.vbar.set(first,last);self.draw_labels()
+
+    def draw_labels(self):
+        if not self.labels.winfo_exists():return
+        self.labels.delete('all')
+        allowed=audible_tracks(self.app.project.tracks);lane=self.lane_height()
+        for i,track in enumerate(self.app.project.tracks):
+            y=i*lane-self.canvas.canvasy(0)
+            bg='#353e4b' if i==self.app.project.ui['selected'] else '#242b34'
+            self.labels.create_rectangle(0,y,self.LABEL,y+lane,fill=bg,outline='#434b59')
+            self.labels.create_text(10,y+lane/2,text=f"{i+1:02} {'S' if track.solo else '-'}{'M' if track.muted else '-'} {track.name}",
+                anchor='w',fill=track_color(i) if allowed[i] else '#7c8490',width=self.LABEL-14)
 
     def scrolled(self, first, last):
         self.scrollbar.set(first, last)
         self.draw_ruler()
 
     def draw_ruler(self):
+        if not self.ruler.winfo_exists():return
         self.ruler.delete('all')
         offset = self.canvas.canvasx(0)
         meter = MeterMap(self.app.project.signatures)
@@ -54,6 +78,7 @@ class TrackOverview(tk.Frame):
         self.ruler.create_text(8, 13, text='ALL TRACKS', anchor='w', fill='#c5cedb')
 
     def redraw(self):
+        if not self.ruler.winfo_exists() or not self.labels.winfo_exists():return
         c = self.canvas
         c.delete('all')
         self.labels.delete('all')
@@ -61,7 +86,7 @@ class TrackOverview(tk.Frame):
         meter = MeterMap(project.signatures)
         end_tick = meter.extent(project_end(project),project.ui.get('bars',8))
         width = self.LABEL + end_tick*self.SCALE
-        height = max(1, c.winfo_height())
+        height = 16*self.lane_height()
         c.configure(scrollregion=(0, 0, width, height))
         lane = self.lane_height()
         allowed=audible_tracks(project.tracks)
@@ -70,10 +95,6 @@ class TrackOverview(tk.Frame):
             active = i == project.ui['selected']
             bg = '#353e4b' if active else ('#242b34' if i % 2 else '#20252d')
             c.create_rectangle(0, y, width, y+lane, fill=bg, outline='#434b59', tags=('lane',))
-            self.labels.create_rectangle(0, y, self.LABEL, y+lane, fill=bg, outline='#434b59')
-            self.labels.create_rectangle(3, y+3, 7, y+lane-3, fill=track_color(i), outline='')
-            self.labels.create_text(13, y+lane/2, text=f"{i+1:02} {'S' if track.solo else '-'}{'M' if track.muted else '-'}  {track.name}",
-                                    anchor='w', fill=track_color(i) if allowed[i] else '#7c8490', width=self.LABEL-18)
         for tick,bar,beat,n,d in meter.beats(0,end_tick):
             x = self.LABEL + tick*self.SCALE
             c.create_line(x, 0, x, height, fill='#525d6d' if beat==1 else '#303946',tags='meter_line')
@@ -85,7 +106,7 @@ class TrackOverview(tk.Frame):
                 y = i*lane+4+(high-note.pitch)/(high-low)*max(1, lane-10)
                 c.create_rectangle(x, y, max(x+2, x+note.duration*self.SCALE), y+3,
                                    fill=track_color(i) if allowed[i] else '#535d6a', outline='', tags=('overview_note', f'track_{i}'))
-        self.draw_ruler()
+        self.draw_ruler();self.draw_labels()
         self.cursor(self.position)
 
     def cursor(self, tick, follow=False):
@@ -103,7 +124,7 @@ class TrackOverview(tk.Frame):
 
     def select(self, event):
         self.canvas.focus_set()
-        index = min(15, max(0, int(event.y/self.lane_height())))
+        index = min(15, max(0, int(self.canvas.canvasy(event.y)/self.lane_height())))
         self.app.project.ui['selected'] = index
         self.app.project.ui['track_selection'] = [index]
         self.app.sync_ui()
@@ -118,5 +139,9 @@ class TrackOverview(tk.Frame):
             return
         self.app.set_playhead(max(0, round((self.canvas.canvasx(event.x)-self.LABEL)/self.SCALE)))
 
-    def wheel(self, event):
-        self.canvas.xview_scroll(-1 if event.delta > 0 else 1, 'units')
+    def wheel(self,event):
+        delta=self.app.roll.wheel_delta(event)
+        pixels=round(max(-200,min(200,-delta*12)))
+        if getattr(event,'state',0)&5:self.canvas.xview_scroll(pixels,'units')
+        else:self.canvas.yview_scroll(pixels,'units')
+        return 'break'

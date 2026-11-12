@@ -88,6 +88,19 @@ class Player:
             except Exception as exc:
                 self.errors.put(str(exc))
 
+    def live_cc(self,index,control,value,tracks):
+        with self._dispatch:
+            if not self.playing or not self._ready:return False
+            self._tracks[index].events=deepcopy(tracks[index].events)
+            # CC7/10 do not trigger notes and may be set while the track is muted.
+            self._output.send(mido.Message('control_change',channel=tracks[index].channel,
+                                            control=control,value=value))
+            return True
+
+    def send_sysex(self,message):
+        with self._dispatch:
+            if self._output:self._output.send(message)
+
     def begin_preview(self,index,pitch,velocity):
         """Preview without changing programs or releasing a sequenced unison."""
         with self._dispatch:
@@ -125,6 +138,8 @@ class Player:
         try:
             events = []
             with self._dispatch:
+                for event in project.sysex:
+                    if event['tick']==start:self.send_sysex(mido.Message('sysex',data=event['data']))
                 for index, track in enumerate(project.tracks):
                     if self._allowed[index]:
                         output.setup(track)
@@ -143,11 +158,15 @@ class Player:
                                                                                   note=note.pitch,velocity=note.velocity),key))
                         events.append((end,0,index,'off',mido.Message('note_off',channel=track.channel,note=note.pitch),key))
                 self._ready = True
+            # Never chase SysEx when seeking: replaying old device commands can reset patches.
+            events += [(e['tick'],1,-1,'sysex',mido.Message('sysex',data=e['data']),None)
+                       for e in project.sysex if e['tick']>start]
             for tick,_,index,kind,message,key in sorted(events,key=lambda e:(e[0],e[1])):
                 delay = self.origin+self.timeline.seconds(tick)-time.perf_counter()
                 if self.cancel.wait(max(0,delay)):
                     break
-                self._dispatch_event(index,kind,message,key)
+                if kind=='sysex':self.send_sysex(message)
+                else:self._dispatch_event(index,kind,message,key)
                 self.position = tick
         except Exception as exc:
             self.errors.put(str(exc))

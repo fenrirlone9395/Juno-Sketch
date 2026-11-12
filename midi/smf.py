@@ -10,6 +10,7 @@ def save(project, path):
     events = [(0, mido.MetaMessage('set_tempo', tempo=mido.bpm2tempo(project.bpm)))]
     events += [(int(t), mido.MetaMessage('set_tempo', tempo=int(v))) for t,v in project.tempos if t>0]
     events += [(int(t), mido.MetaMessage('time_signature', numerator=n, denominator=d)) for t,n,d in project.signatures]
+    events += [(e['tick'],mido.Message('sysex',data=e['data'])) for e in project.sysex]
     _write(conductor, events)
     for track in project.tracks:
         out = mido.MidiTrack()
@@ -58,6 +59,8 @@ def load(path):
                 p.tempos.append([t,m.tempo])
             if m.type == 'time_signature':
                 p.signatures.append([t,m.numerator,m.denominator])
+            if m.type=='sysex':
+                p.sysex.append(dict(tick=t,data=list(m.data),label='Imported SysEx'))
             if m.is_meta or not hasattr(m, 'channel'):
                 continue
             key = (ti,m.channel)
@@ -96,5 +99,6 @@ def load(path):
         p.bpm = mido.tempo2bpm(p.tempos[0][1])
     if not p.signatures: p.signatures=[[0,4,4]]
     meter=MeterMap(p.signatures)
-    p.ui['bars'] = max(8,meter.position(max((n.start+n.duration for tr in p.tracks for n in tr.notes),default=0))[0]+1)
+    from ui.track_colors import project_end
+    p.ui['bars'] = max(8,meter.position(project_end(p))[0]+1)
     return p, list(dict.fromkeys(warnings))

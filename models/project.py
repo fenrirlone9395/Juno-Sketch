@@ -33,8 +33,9 @@ class Project:
     bpm: float = 120
     tracks: list[Track] = field(default_factory=lambda: [Track(f'Track {i+1:02}', i, msb=120 if i==9 else 121) for i in range(16)])
     tempos: list = field(default_factory=list)
+    sysex: list = field(default_factory=list)
     signatures: list = field(default_factory=lambda: [[0, 4, 4]])
-    ui: dict = field(default_factory=lambda: dict(grid='1/16', mode='Grid', selected=0, output='Internal Preview', port='', bars=8, show_ghosts=True, view='Piano Roll', follow_playhead=True, track_selection=[0], zoom_x=1.0, zoom_y=1.0, wheel_horizontal=False))
+    ui: dict = field(default_factory=lambda: dict(grid='1/16', mode='Grid', selected=0, output='Internal Preview', port='', bars=8, show_ghosts=True, view='Piano Roll', follow_playhead=True, track_selection=[0], zoom_x=1.0, zoom_y=1.0, wheel_horizontal=False, master_volume=0.8))
 
     def data(self):
         return asdict(self)
@@ -83,6 +84,11 @@ class Project:
                 raise ValueError('不正なズーム倍率です')
         if not isinstance(p.ui['wheel_horizontal'],bool):
             raise ValueError('不正なスクロール設定です')
+        p.sysex = data.get('sysex', [])
+        from services.sysex import validate
+        validate(p.sysex)
+        master=p.ui['master_volume']
+        if not isinstance(master,(int,float)) or not 0<=master<=1:raise ValueError('不正なマスター音量です')
         p.tempos = data.get('tempos', [])
         p.signatures = data.get('signatures', [[0,4,4]])
         from services.meter import MeterMap

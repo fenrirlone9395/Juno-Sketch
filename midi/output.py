@@ -11,6 +11,9 @@ class MidiOutput(ABC):
         for control, value in ((0, track.msb), (32, track.lsb)):
             self.send(mido.Message('control_change', channel=track.channel, control=control, value=value))
         self.send(mido.Message('program_change', channel=track.channel, program=track.program))
+        from services.controllers import cc_value
+        for control in (7,10):
+            self.send(mido.Message('control_change',channel=track.channel,control=control,value=cc_value(track,control)))
     def panic(self):
         for channel in range(16):
             for control in (64, 123, 120):

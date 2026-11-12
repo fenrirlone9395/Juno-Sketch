@@ -19,5 +19,7 @@ def ghost_color(index):
 
 
 def project_end(project):
-    return max((note.start + note.duration for track in project.tracks
-                for note in track.notes), default=0)
+    ends=[note.start+note.duration for track in project.tracks for note in track.notes]
+    ends += [tick for track in project.tracks for tick,_ in track.events]
+    ends += [event['tick'] for event in project.sysex]
+    return max(ends,default=0)
