@@ -10,10 +10,13 @@ class MidiMixer(ttk.Frame):
     def __init__(self,parent,app):
         super().__init__(parent);self.app=app;self.updating=True;self.before=None;self.controls=[]
         ttk.Label(self,text='MIDI Mixer • Volume CC7 / Pan CC10（開始時の設定・後続CCで上書き）').pack(anchor='w')
-        self.canvas=tk.Canvas(self,height=176,highlightthickness=0)
+        self.canvas=tk.Canvas(self,height=176,highlightthickness=0,xscrollincrement=1)
         self.canvas.pack(fill='x',expand=True)
         scroll=ttk.Scrollbar(self,orient='horizontal',command=self.canvas.xview);scroll.pack(fill='x')
         self.canvas.configure(xscrollcommand=scroll.set)
+        for widget in (self.canvas,scroll):
+            for seq in ('<MouseWheel>','<Shift-MouseWheel>','<Button-4>','<Button-5>','<Shift-Button-4>','<Shift-Button-5>'):
+                widget.bind(seq,self.wheel)
         frame=ttk.Frame(self.canvas);self.canvas.create_window(0,0,window=frame,anchor='nw')
         for i in range(16):
             strip=ttk.Frame(frame,padding=4);strip.grid(row=0,column=i)
@@ -28,6 +31,12 @@ class MidiMixer(ttk.Frame):
                 self.controls.append((i,cc,name,scale))
         frame.update_idletasks();self.canvas.configure(scrollregion=self.canvas.bbox('all'),height=frame.winfo_reqheight())
         self.sync()
+    def wheel(self,event):
+        if getattr(event,'state',0)&4:return 'break'
+        pixels=round(max(-200,min(200,-self.app.roll.wheel_delta(event)*12)))
+        if getattr(event,'state',0)&1:self.canvas.xview_scroll(pixels,'units')
+        else:self.app.overview.canvas.yview_scroll(pixels,'units')
+        return 'break'
     def begin(self,event=None):
         self.before=deepcopy(self.app.project)
     def end(self,event=None):

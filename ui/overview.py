@@ -35,8 +35,8 @@ class TrackOverview(tk.Frame):
         self.canvas.bind('<Double-Button-1>', self.edit)
         self.labels.bind('<Button-1>', self.select)
         self.labels.bind('<Double-Button-1>', self.edit)
-        for widget in (self.canvas,self.labels,self.ruler):
-            for seq in ('<MouseWheel>','<Shift-MouseWheel>','<Control-MouseWheel>','<Button-4>','<Button-5>','<Control-Button-4>','<Control-Button-5>'):
+        for widget in (self.canvas,self.labels,self.ruler,self.scrollbar,self.vbar):
+            for seq in ('<MouseWheel>','<Shift-MouseWheel>','<Button-4>','<Button-5>','<Shift-Button-4>','<Shift-Button-5>'):
                 widget.bind(seq,self.wheel)
         self.ruler.bind('<Button-1>', self.seek)
 
@@ -140,8 +140,9 @@ class TrackOverview(tk.Frame):
         self.app.set_playhead(max(0, round((self.canvas.canvasx(event.x)-self.LABEL)/self.SCALE)))
 
     def wheel(self,event):
+        if getattr(event,'state',0)&4:return 'break'
         delta=self.app.roll.wheel_delta(event)
         pixels=round(max(-200,min(200,-delta*12)))
-        if getattr(event,'state',0)&5:self.canvas.xview_scroll(pixels,'units')
+        if getattr(event,'state',0)&1:self.canvas.xview_scroll(pixels,'units')
         else:self.canvas.yview_scroll(pixels,'units')
         return 'break'

@@ -273,7 +273,7 @@ def test_zoom_anchor_scroll_synchronization_and_saved_ui(tmp_path):
         assert r.velocity.xview()[0]==pytest.approx(r.canvas.xview()[0],abs=.001)
         left=r.canvas.canvasx(0)
         r.horizontal_wheel.set(True);r.wheel_mode_changed()
-        r.wheel(NS(delta=-3,state=4,num=None));app.update()
+        r.wheel(NS(delta=-3,state=1,num=None));app.update()
         assert r.canvas.canvasx(0)>left
         app.path=tmp_path/'zoom.juno.json';app.save()
         q=load(app.path)
@@ -524,14 +524,14 @@ def test_resumed_editor_scroll_and_hint_modes():
                 r.canvas.event_generate('<MouseWheel>',delta=-3);app.update()
                 assert r.canvas.canvasy(0)>y0 and r.canvas.canvasx(0)==x0
                 y0=r.canvas.canvasy(0)
-                r.canvas.event_generate('<Control-MouseWheel>',delta=-3);app.update()
+                r.canvas.event_generate('<Shift-MouseWheel>',delta=-3);app.update()
                 assert r.canvas.canvasx(0)>x0 and r.canvas.canvasy(0)==y0 and r.SCALE==scale
                 r.canvas.event_generate('<Alt-MouseWheel>',delta=3);app.update()
                 assert r.SCALE>scale
             else:
                 app.geometry('940x620');app.update()
                 o=app.overview;o.canvas.xview_moveto(0);o.canvas.yview_moveto(0);app.update()
-                o.canvas.event_generate('<Control-MouseWheel>',delta=-3);app.update()
+                o.canvas.event_generate('<Shift-MouseWheel>',delta=-3);app.update()
                 assert o.canvas.canvasx(0)>0
                 o.labels.event_generate('<MouseWheel>',delta=-3);app.update()
                 assert o.canvas.canvasy(0)>0
@@ -539,23 +539,24 @@ def test_resumed_editor_scroll_and_hint_modes():
         app.stop();app.release_output();app.destroy()
 
 
-def test_cc_editor_template_update_and_project_undo():
+def test_cc_lane_template_update_and_project_undo():
     from ui.main_window import MainWindow
-    from ui.event_editors import CcEditor
+    from models.project import Note
     from services.controllers import cc_value,cc_events
     app=MainWindow()
     try:
-        app.change_meter(1,3,4);app.update()
-        d=CcEditor(app);app.update()
-        assert d.end.get()=='2880'
-        d.tick.set('160');d.end.set('640');d.pedal()
+        app.track.notes=[Note(160,60,480)];app.sync_ui();app.update()
+        app.roll.selected={app.track.notes[0].id};app.cc_editor();app.update()
+        d=app.roll.cc_lane
+        assert not [w for w in app.winfo_children() if w.winfo_class()=='Toplevel']
+        d.notes_pedal()
         assert [(t,v) for _,t,v in cc_events(app.track,64)]==[(160,127),(640,0)]
-        d.control.set('7 Volume');d.tick.set('0');d.value.set('85');d.put();d.refresh()
+        d.control.set('7 Volume');d.control_change();d.position.set('1|1');d.value.set('85');d.add()
         assert cc_value(app.track,7)==85
-        row=d.table.get_children()[0];d.table.selection_set(row);d.select()
-        d.value.set('73');d.update_event()
+        d.table.selection_set(d.table.get_children());d.table_select()
+        d.value.set('73');d.set_values()
         assert cc_value(app.track,7)==73
-        d.close();app.undo();assert cc_value(app.track,7)==85
+        app.undo();assert cc_value(app.track,7)==85
         app.redo();assert cc_value(app.track,7)==73
     finally:
         app.stop();app.release_output();app.destroy()

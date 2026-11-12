@@ -88,3 +88,10 @@ Drum Editorを追加。全128ノートの往復座標変換、GM47参考名、�
 実Tk入力でPiano Roll／Drum Editor／All Tracksのホイール縦横、Optionズーム、モード案内消去、CCエディタ編集とUndo、ミキサーUndo、Internal MasterのJUNO時無効化、SysExエディタ追加／更新／送信を確認。GUIエラーはテスト失敗として検出し、モーダル通知でテストが停止しないようにした。CC・SysExエディタとAll Tracksの画面を描画確認。
 
 macOSのAUGraphに追加したMultiChannelMixerの実発音、実トラックパッド、JUNO-DSのCC／SysEx受信は未検証。SysExエディタは汎用HEX編集であり、機種固有のアドレス・チェックサム補助は今後の課題。DAW同期は将来候補のまま。
+
+
+## v0.2.1
+
+75テスト成功。CCレーンがメインウィンドウ内にあり、ノートを保持したままマウスでサスティンON→OFFを描けること、1回Undo、拍子変更／三連符を含む小節|拍位置の往復、実TreeviewのShift範囲選択、CC値の一括変更・一括削除とUndo、別CC／ノートの保持を確認。
+
+ピアノロールとCCレーンの同じ時間座標、拡大率、スクロール同期を確認。ノートCanvas、鍵盤、ルーラー、Velocity、CC Canvas、縦横スクロールバーに実ホイールイベントを送り、通常は縦・Shiftは横・Controlはアプリ側で操作しないことを確認。CC表示・選択番号のプロジェクト保存、案内表示、従来機能の回帰も検証。展開したCCレーンと一覧を仮想画面で描画確認。macOS標準拡大機能と実トラックパッドでの確認は未実施。

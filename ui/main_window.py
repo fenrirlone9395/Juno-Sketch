@@ -15,13 +15,13 @@ from midi.juno_ds import JunoDsOutput
 from ui.piano_roll import PianoRoll
 from ui.overview import TrackOverview
 from ui.track_colors import track_color
-from ui.event_editors import CcEditor, SysexEditor
+from ui.event_editors import SysexEditor
 from services.controllers import put_cc
 
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('JUNO Sketch • v0.2.0')
+        self.title('JUNO Sketch • v0.2.1')
         self.geometry('1240x820')
         self.minsize(940,620)
         self.project=Project();self.history=History();self.player=Player()
@@ -106,7 +106,7 @@ class MainWindow(tk.Tk):
         edit=tk.Menu(bar,tearoff=False);bar.add_cascade(label='Edit',menu=edit)
         edit.add_command(label='Undo',command=self.undo);edit.add_command(label='Redo',command=self.redo)
         edit.add_command(label='Select All Notes',command=self.select_all)
-        edit.add_command(label='CC Editor…',command=self.cc_editor)
+        edit.add_command(label='CCレーン',command=self.cc_editor)
         edit.add_command(label='SysEx Editor…',command=self.sysex_editor)
         helpmenu=tk.Menu(bar,tearoff=False);bar.add_cascade(label='Help',menu=helpmenu)
         helpmenu.add_command(label='操作方法',command=lambda:messagebox.showinfo('JUNO Sketch','Piano Roll: 空白をダブルクリックして作成。\nDrum Editor: 空白をクリック、楽器名を押して試聴。\nShift＋空白ドラッグで範囲選択。\nGrid / Slip と三連符は上部で切替。\nMIDI Channelは1–16、Programは1–128で表示。\n内部音源はGMの近似音色です。JUNOの音色とは異なります。\nJUNOはPerformanceの16パートで受信する設定にしてください。'))
@@ -144,7 +144,7 @@ class MainWindow(tk.Tk):
         self.view_hint=ttk.Label(views,text='All Tracks: ダブルクリックで編集')
         self.view_hint.pack(side='left',padx=8)
         tools=ttk.Frame(self,padding=(8,0,8,4));tools.pack(fill='x')
-        ttk.Button(tools,text='CC Editor',command=self.cc_editor).pack(side='left')
+        ttk.Button(tools,text='CCレーン',command=self.cc_editor).pack(side='left')
         ttk.Button(tools,text='SysEx Editor',command=self.sysex_editor).pack(side='left',padx=6)
         ttk.Label(tools,text='Internal Master').pack(side='left',padx=(12,4))
         self.master_var=tk.DoubleVar(value=.8)
@@ -426,7 +426,10 @@ class MainWindow(tk.Tk):
             self.status.set(f'{label}を適用・送信しました' if switched else 'MIDIポートを変更しました')
         self.guarded(action)
     def cc_editor(self):
-        self.stop();self.end_audition();CcEditor(self)
+        self.end_audition()
+        if self.project.ui.get('view')=='All Tracks':
+            self.view_var.set('Piano Roll');self.view_change()
+        self.roll.show_cc()
     def sysex_editor(self):
         self.stop();self.end_audition();SysexEditor(self)
     def set_mixer_cc(self,index,control,value):
@@ -536,13 +539,17 @@ class MainWindow(tk.Tk):
     def text_focus(self):
         return isinstance(self.focus_get(),(tk.Entry,ttk.Entry,ttk.Spinbox,ttk.Combobox))
     def delete_key(self,e):
-        if not self.text_focus() and self.project.ui.get('view')!='All Tracks':self.roll.delete();return 'break'
+        if not self.text_focus() and self.project.ui.get('view')!='All Tracks':
+            if self.roll.cc_lane.focused():self.roll.cc_lane.delete()
+            else:self.roll.delete()
+            return 'break'
     def space(self,e):
         if not self.text_focus():self.guarded(self.toggle);return 'break'
     def shortcut(self,func):
         self.guarded(func);return 'break'
     def select_all(self):
         if self.project.ui.get('view')=='All Tracks':return
+        if self.roll.cc_lane.focused():self.roll.cc_lane.select_all();return
         self.roll.selected={n.id for n in self.track.notes};self.roll.redraw()
     def undo(self):
         self.stop();self.release_output();self.project=self.history.undo(self.project);self.changed();self.sync_ui()

@@ -5,6 +5,7 @@ from models.project import Note, PPQ, GRIDS
 from services.meter import MeterMap
 from services.output_mode import is_drum
 from ui.drum_editor import DrumLayout
+from ui.cc_lane import CcLane
 from ui.track_colors import track_color, ghost_color, project_end
 
 class PianoRoll(tk.Frame):
@@ -31,7 +32,7 @@ class PianoRoll(tk.Frame):
         self.y_zoom_label=ttk.Label(toolbar,width=5);self.y_zoom_label.pack(side='left',padx=3)
         ttk.Button(toolbar,text='100%',width=5,command=lambda:self.zoom(reset=True)).pack(side='left',padx=5)
         self.horizontal_wheel=tk.BooleanVar(value=False)
-        ttk.Label(toolbar,text='Ctrl: 横 / Option: ズーム').pack(side='left',padx=8)
+        ttk.Label(toolbar,text='Shift: 横 / Option: ズーム').pack(side='left',padx=8)
         self.canvas=tk.Canvas(self,bg='#20252d',highlightthickness=0,xscrollincrement=1,yscrollincrement=1)
         self.velocity=tk.Canvas(self,bg='#191e26',height=110,highlightthickness=0)
         self.ruler=tk.Canvas(self,bg='#20252d',height=28,highlightthickness=0)
@@ -55,27 +56,26 @@ class PianoRoll(tk.Frame):
         self.columnconfigure(0,weight=1)
         for seq,func in [('<Button-1>',self.down),('<B1-Motion>',self.motion),('<ButtonRelease-1>',self.up),('<Double-Button-1>',self.double),('<Button-2>',self.context),('<Button-3>',self.context)]:
             self.canvas.bind(seq,func)
-        for widget in (self.canvas,self.keys,self.ruler,self.velocity,self.hbar):
-            horizontal=widget==self.hbar
-            widget.bind('<MouseWheel>',lambda e,h=horizontal:self.wheel(e,horizontal=h))
-            # Aqua sends native horizontal trackpad gestures as Shift-MouseWheel.
-            widget.bind('<Shift-MouseWheel>',lambda e:self.wheel(e,horizontal=True))
-            widget.bind('<Control-MouseWheel>',lambda e:self.wheel(e,horizontal=True))
-            widget.bind('<Control-Shift-MouseWheel>',lambda e:self.wheel(e,horizontal=True))
-            widget.bind('<Alt-MouseWheel>',lambda e:self.wheel_zoom(e,vertical=False))
-            widget.bind('<Alt-Shift-MouseWheel>',lambda e:self.wheel_zoom(e,vertical=True))
-            widget.bind('<Button-4>',lambda e,h=horizontal:self.wheel(e,horizontal=h))
-            widget.bind('<Button-5>',lambda e,h=horizontal:self.wheel(e,horizontal=h))
-            widget.bind('<Shift-Button-4>',lambda e:self.wheel(e,horizontal=True))
-            widget.bind('<Shift-Button-5>',lambda e:self.wheel(e,horizontal=True))
-            widget.bind('<Control-Button-4>',lambda e:self.wheel(e,horizontal=True))
-            widget.bind('<Control-Button-5>',lambda e:self.wheel(e,horizontal=True))
+        for widget in (self.canvas,self.keys,self.ruler,self.velocity,self.hbar,self.vbar):
+            self.bind_wheel(widget)
+        self.cc_lane=CcLane(self,self)
+        self.cc_lane.grid(row=3,column=0,sticky='ew');self.cc_lane.grid_remove()
         self.velocity.bind('<Button-1>',self.vel_down)
         self.velocity.bind('<B1-Motion>',self.vel_motion)
         self.velocity.bind('<ButtonRelease-1>',self.vel_up)
         self.sync_zoom()
         self.redraw()
         self.canvas.yview_moveto(0.43)
+    def bind_wheel(self,widget):
+        widget.bind('<MouseWheel>',self.wheel)
+        widget.bind('<Shift-MouseWheel>',lambda e:self.wheel(e,horizontal=True))
+        widget.bind('<Alt-MouseWheel>',lambda e:self.wheel_zoom(e,vertical=False))
+        widget.bind('<Alt-Shift-MouseWheel>',lambda e:self.wheel_zoom(e,vertical=True))
+        for seq in ('<Button-4>','<Button-5>'):widget.bind(seq,self.wheel)
+        for seq in ('<Shift-Button-4>','<Shift-Button-5>'):
+            widget.bind(seq,lambda e:self.wheel(e,horizontal=True))
+    def show_cc(self):
+        self.cc_lane.show();self.app.changed()
     @property
     def track(self): return self.app.track
     @property
@@ -101,6 +101,7 @@ class PianoRoll(tk.Frame):
     def xchanged(self,first,last):
         self.hbar.set(first,last)
         self.velocity.xview_moveto(float(first))
+        if hasattr(self,'cc_lane'):self.cc_lane.draw()
         self.draw_ruler()
     def ychanged(self,first,last):
         self.vbar.set(first,last)
@@ -171,7 +172,8 @@ class PianoRoll(tk.Frame):
         delta=getattr(event,'delta',0)
         return delta/120 if self.tk.call('tk','windowingsystem')=='win32' else delta
     def wheel(self,e,horizontal=False):
-        horizontal=horizontal or bool(getattr(e,'state',0)&5)
+        if getattr(e,'state',0)&4:return 'break'
+        horizontal=horizontal or bool(getattr(e,'state',0)&1)
         axis='x' if horizontal else 'y'
         self._wheel_remainder[axis]+=max(-200,min(200,-self.wheel_delta(e)*12))
         pixels=int(self._wheel_remainder[axis])
@@ -257,6 +259,12 @@ class PianoRoll(tk.Frame):
         self.draw_velocity()
         self.draw_ruler();self.draw_keys()
         self.cursor(self.app.playhead)
+        if hasattr(self,'cc_lane'):
+            lane=self.cc_lane
+            if self.app.project.ui.get('cc_visible',False):
+                self.velocity.grid_remove();lane.grid(row=3,column=0,sticky='ew')
+            else:lane.grid_remove();self.velocity.grid()
+            lane.refresh()
     def draw_velocity(self):
         v=self.velocity
         v.delete('all')
@@ -275,6 +283,7 @@ class PianoRoll(tk.Frame):
                 total=float(c.cget('scrollregion').split()[2])
                 self.xview('moveto',max(0,(x-self.KEY-available*.15)/total))
         c.create_line(x,0,x,self.TOP+128*self.ROW,fill='#ff6b73',width=2,tags='playhead')
+        if hasattr(self,'cc_lane'):self.cc_lane.cursor(tick)
     def down(self,e):
         self.canvas.focus_set()
         x,y=self.canvas.canvasx(e.x),self.canvas.canvasy(e.y)

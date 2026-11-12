@@ -35,7 +35,7 @@ class Project:
     tempos: list = field(default_factory=list)
     sysex: list = field(default_factory=list)
     signatures: list = field(default_factory=lambda: [[0, 4, 4]])
-    ui: dict = field(default_factory=lambda: dict(grid='1/16', mode='Grid', selected=0, output='Internal Preview', port='', bars=8, show_ghosts=True, view='Piano Roll', follow_playhead=True, track_selection=[0], zoom_x=1.0, zoom_y=1.0, wheel_horizontal=False, master_volume=0.8))
+    ui: dict = field(default_factory=lambda: dict(grid='1/16', mode='Grid', selected=0, output='Internal Preview', port='', bars=8, show_ghosts=True, view='Piano Roll', follow_playhead=True, track_selection=[0], zoom_x=1.0, zoom_y=1.0, wheel_horizontal=False, master_volume=0.8, cc_visible=False, cc_control=64))
 
     def data(self):
         return asdict(self)
@@ -84,6 +84,8 @@ class Project:
                 raise ValueError('不正なズーム倍率です')
         if not isinstance(p.ui['wheel_horizontal'],bool):
             raise ValueError('不正なスクロール設定です')
+        if not isinstance(p.ui['cc_visible'],bool) or type(p.ui['cc_control']) is not int or not 0<=p.ui['cc_control']<=127 or p.ui['cc_control'] in (0,32):
+            raise ValueError('不正なCC表示設定です')
         p.sysex = data.get('sysex', [])
         from services.sysex import validate
         validate(p.sysex)
